@@ -1,0 +1,169 @@
+   Compiling perf-rs v0.1.0 (/home/changbin/work/perf-rs)
+warning: trait `PmuEvent` is never used
+  --> src/arch/mod.rs:19:11
+   |
+19 | pub trait PmuEvent {
+   |           ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: function `get_arch_name` is never used
+  --> src/arch/mod.rs:40:8
+   |
+40 | pub fn get_arch_name() -> &'static str {
+   |        ^^^^^^^^^^^^^
+
+warning: struct `X86_64Pmu` is never constructed
+ --> src/arch/x86_64.rs:6:12
+  |
+6 | pub struct X86_64Pmu;
+  |            ^^^^^^^^^
+
+warning: variants `ParanoidReadError`, `InvalidParanoidValue`, `InsufficientPrivileges`, and `CapabilityCheckFailed` are never constructed
+  --> src/core/privilege.rs:14:5
+   |
+12 | pub enum PrivilegeError {
+   |          -------------- variants in this enum
+13 |     #[error("Failed to read perf_event_paranoid: {0}")]
+14 |     ParanoidReadError(#[source] io::Error),
+   |     ^^^^^^^^^^^^^^^^^
+...
+17 |     InvalidParanoidValue(String),
+   |     ^^^^^^^^^^^^^^^^^^^^
+...
+20 |     InsufficientPrivileges(String),
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+...
+23 |     CapabilityCheckFailed(String),
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `PrivilegeError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: variants `Full`, `Limited`, and `None` are never constructed
+  --> src/core/privilege.rs:31:5
+   |
+28 | pub enum PrivilegeLevel {
+   |          -------------- variants in this enum
+...
+31 |     Full,
+   |     ^^^^
+...
+35 |     Limited,
+   |     ^^^^^^^
+...
+39 |     None,
+   |     ^^^^
+   |
+   = note: `PrivilegeLevel` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `can_profile`, `can_profile_kernel`, `description`, and `suggestions` are never used
+  --> src/core/privilege.rs:44:12
+   |
+42 | impl PrivilegeLevel {
+   | ------------------- methods in this implementation
+43 |     /// Returns true if this level allows the operation
+44 |     pub fn can_profile(&self) -> bool {
+   |            ^^^^^^^^^^^
+...
+49 |     pub fn can_profile_kernel(&self) -> bool {
+   |            ^^^^^^^^^^^^^^^^^^
+...
+54 |     pub fn description(&self) -> &'static str {
+   |            ^^^^^^^^^^^
+...
+63 |     pub fn suggestions(&self) -> Vec<String> {
+   |            ^^^^^^^^^^^
+
+warning: function `has_cap_perfmon` is never used
+  --> src/core/privilege.rs:91:4
+   |
+91 | fn has_cap_perfmon() -> Result<bool, PrivilegeError> {
+   |    ^^^^^^^^^^^^^^^
+
+warning: function `has_cap_sys_admin` is never used
+   --> src/core/privilege.rs:123:4
+    |
+123 | fn has_cap_sys_admin() -> Result<bool, PrivilegeError> {
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: function `read_perf_event_paranoid` is never used
+   --> src/core/privilege.rs:155:4
+    |
+155 | fn read_perf_event_paranoid() -> Result<i32, PrivilegeError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `check_privilege` is never used
+   --> src/core/privilege.rs:196:8
+    |
+196 | pub fn check_privilege() -> Result<PrivilegeLevel, PrivilegeError> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `ensure_privilege` is never used
+   --> src/core/privilege.rs:265:8
+    |
+265 | pub fn ensure_privilege(require_kernel: bool) -> Result<(), PrivilegeError> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: multiple variants are never constructed
+   --> src/error.rs:14:5
+    |
+11  | pub enum PerfError {
+    |          --------- variants in this enum
+...
+14  |     ProcessAttach {
+    |     ^^^^^^^^^^^^^
+...
+23  |     ProcessNotFound {
+    |     ^^^^^^^^^^^^^^^
+...
+32  |     CounterSetup {
+    |     ^^^^^^^^^^^^
+...
+39  |     CounterEnable {
+    |     ^^^^^^^^^^^^^
+...
+48  |     CounterDisable {
+    |     ^^^^^^^^^^^^^^
+...
+57  |     CounterRead {
+    |     ^^^^^^^^^^^
+...
+66  |     PermissionDenied {
+    |     ^^^^^^^^^^^^^^^^
+...
+73  |     InvalidConfig {
+    |     ^^^^^^^^^^^^^
+...
+80  |     FileNotFound {
+    |     ^^^^^^^^^^^^
+...
+87  |     FileParse {
+    |     ^^^^^^^^^
+...
+96  |     FileRead {
+    |     ^^^^^^^^
+...
+105 |     FileWrite {
+    |     ^^^^^^^^^
+...
+114 |     InvalidEvent {
+    |     ^^^^^^^^^^^^
+...
+123 |     SyscallError {
+    |     ^^^^^^^^^^^^
+...
+136 |     Other(String),
+    |     ^^^^^
+    |
+    = note: `PerfError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: type alias `Result` is never used
+   --> src/error.rs:140:10
+    |
+140 | pub type Result<T> = std::result::Result<T, PerfError>;
+    |          ^^^^^^
+
+warning: `perf-rs` (bin "perf-rs") generated 13 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.15s
+     Running `target/debug/perf-rs stat -- echo test`
+Stat command - pid: None, event: None, command: ["echo", "test"]

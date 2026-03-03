@@ -1,0 +1,73 @@
+# Rust build artifacts
+target/
+
+# Backup files
+*.rs.bk
+*.swp
+*.swo
+*~
+
+# OS-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Performance profiling data
+perf.data
+perf.data.old
+*.perf
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+*.sublime-*
+.project
+.classpath
+.settings/
+
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# Test coverage
+*.profraw
+*.profdata
+coverage/
+lcov.info
+
+# Documentation
+/doc/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.log
+
+# Lock files (optional - uncomment if you want to ignore)
+# Cargo.lock
+
+# Build artifacts
+*.o
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+
+# Debug files
+*.pdb
+*.ilk
+*.exp

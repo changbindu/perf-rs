@@ -1,0 +1,25 @@
+warning: `perf-rs` (bin "perf-rs") generated 5 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running `target/debug/perf-rs stat --help`
+Run a command and gather performance statistics.
+
+Counts performance events for a command or process and displays statistics after completion.
+
+Usage: perf-rs stat [OPTIONS] [COMMAND]...
+
+Arguments:
+  [COMMAND]...
+          Command to execute (mutually exclusive with --pid)
+
+Options:
+  -p, --pid <PID>
+          Process ID to monitor (mutually exclusive with command)
+
+  -v, --verbose
+          Enable verbose output
+
+  -e, --event <EVENTS>
+          Performance events to monitor (comma-separated)
+
+  -h, --help
+          Print help (see a summary with '-h')

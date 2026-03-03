@@ -1,0 +1,178 @@
+ Downloading crates ...
+  Downloaded fastrand v2.3.0
+   Compiling fastrand v2.3.0
+   Compiling tempfile v3.10.1
+   Compiling perf-rs v0.1.0 (/home/changbin/work/perf-rs)
+warning: trait `PmuEvent` is never used
+  --> src/arch/mod.rs:19:11
+   |
+19 | pub trait PmuEvent {
+   |           ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: function `get_arch_name` is never used
+  --> src/arch/mod.rs:40:8
+   |
+40 | pub fn get_arch_name() -> &'static str {
+   |        ^^^^^^^^^^^^^
+
+warning: struct `X86_64Pmu` is never constructed
+ --> src/arch/x86_64.rs:6:12
+  |
+6 | pub struct X86_64Pmu;
+  |            ^^^^^^^^^
+
+warning: multiple variants are never constructed
+   --> src/error.rs:14:5
+    |
+11  | pub enum PerfError {
+    |          --------- variants in this enum
+...
+14  |     ProcessAttach {
+    |     ^^^^^^^^^^^^^
+...
+32  |     CounterSetup {
+    |     ^^^^^^^^^^^^
+...
+39  |     CounterEnable {
+    |     ^^^^^^^^^^^^^
+...
+48  |     CounterDisable {
+    |     ^^^^^^^^^^^^^^
+...
+57  |     CounterRead {
+    |     ^^^^^^^^^^^
+...
+87  |     FileParse {
+    |     ^^^^^^^^^
+...
+96  |     FileRead {
+    |     ^^^^^^^^
+...
+105 |     FileWrite {
+    |     ^^^^^^^^^
+...
+114 |     InvalidEvent {
+    |     ^^^^^^^^^^^^
+...
+123 |     SyscallError {
+    |     ^^^^^^^^^^^^
+...
+136 |     Other(String),
+    |     ^^^^^
+    |
+    = note: `PerfError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: type alias `Result` is never used
+   --> src/error.rs:140:10
+    |
+140 | pub type Result<T> = std::result::Result<T, PerfError>;
+    |          ^^^^^^
+
+warning: `perf-rs` (bin "perf-rs" test) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.43s
+     Running unittests src/main.rs (target/debug/deps/perf_rs-b6b86a2550cda339)
+
+running 4 tests
+test core::privilege::tests::test_privilege_level_can_profile_kernel ... ok
+test core::privilege::tests::test_privilege_level_can_profile ... ok
+test core::privilege::tests::test_privilege_level_description ... ok
+test core::privilege::tests::test_privilege_level_suggestions ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+error: no library targets found in package `perf-rs`
+warning: trait `PmuEvent` is never used
+  --> src/arch/mod.rs:19:11
+   |
+19 | pub trait PmuEvent {
+   |           ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: function `get_arch_name` is never used
+  --> src/arch/mod.rs:40:8
+   |
+40 | pub fn get_arch_name() -> &'static str {
+   |        ^^^^^^^^^^^^^
+
+warning: struct `X86_64Pmu` is never constructed
+ --> src/arch/x86_64.rs:6:12
+  |
+6 | pub struct X86_64Pmu;
+  |            ^^^^^^^^^
+
+warning: multiple variants are never constructed
+   --> src/error.rs:14:5
+    |
+11  | pub enum PerfError {
+    |          --------- variants in this enum
+...
+14  |     ProcessAttach {
+    |     ^^^^^^^^^^^^^
+...
+32  |     CounterSetup {
+    |     ^^^^^^^^^^^^
+...
+39  |     CounterEnable {
+    |     ^^^^^^^^^^^^^
+...
+48  |     CounterDisable {
+    |     ^^^^^^^^^^^^^^
+...
+57  |     CounterRead {
+    |     ^^^^^^^^^^^
+...
+87  |     FileParse {
+    |     ^^^^^^^^^
+...
+96  |     FileRead {
+    |     ^^^^^^^^
+...
+105 |     FileWrite {
+    |     ^^^^^^^^^
+...
+114 |     InvalidEvent {
+    |     ^^^^^^^^^^^^
+...
+123 |     SyscallError {
+    |     ^^^^^^^^^^^^
+...
+136 |     Other(String),
+    |     ^^^^^
+    |
+    = note: `PerfError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: type alias `Result` is never used
+   --> src/error.rs:140:10
+    |
+140 | pub type Result<T> = std::result::Result<T, PerfError>;
+    |          ^^^^^^
+
+warning: `perf-rs` (bin "perf-rs" test) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running unittests src/main.rs (target/debug/deps/perf_rs-b6b86a2550cda339)
+
+running 18 tests
+test cli::tests::test_cli_parsing ... ok
+test cli::tests::test_script_command_parsing ... ok
+test cli::tests::test_report_command_parsing ... ok
+test cli::tests::test_record_command_parsing ... ok
+test core::privilege::tests::test_capability_checks ... ok
+test core::privilege::tests::test_check_privilege ... ok
+test core::privilege::tests::test_ensure_privilege_kernel ... ok
+test core::privilege::tests::test_ensure_privilege_user_space ... ok
+test core::privilege::tests::test_privilege_level_can_profile ... ok
+test core::privilege::tests::test_privilege_level_description ... ok
+test core::privilege::tests::test_read_perf_event_paranoid ... ok
+test cli::tests::test_stat_command_parsing ... ok
+test error::tests::test_file_not_found ... ok
+test error::tests::test_invalid_config ... ok
+test error::tests::test_error_display ... ok
+test error::tests::test_permission_denied ... ok
+test core::privilege::tests::test_privilege_level_can_profile_kernel ... ok
+test core::privilege::tests::test_privilege_level_suggestions ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
