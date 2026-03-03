@@ -1,0 +1,103 @@
+warning: unused imports: `Cache`, `Software`
+   --> src/core/perf_event.rs:382:30
+    |
+382 | pub use perf_event::events::{Cache, Hardware, Software};
+    |                              ^^^^^            ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Counter as PerfCounter`, `Group as PerfGroup`, `GroupData as PerfGroupData`
+   --> src/core/perf_event.rs:383:22
+    |
+383 | pub use perf_event::{Counter as PerfCounter, Group as PerfGroup, GroupData as PerfGroupData};
+    |                      ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `data`
+   --> src/core/perf_event.rs:527:24
+    |
+527 |                     Ok(data) => println!("Group data read successfully"),
+    |                        ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: trait `PmuEvent` is never used
+  --> src/arch/mod.rs:19:11
+   |
+19 | pub trait PmuEvent {
+   |           ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: function `get_arch_name` is never used
+  --> src/arch/mod.rs:40:8
+   |
+40 | pub fn get_arch_name() -> &'static str {
+   |        ^^^^^^^^^^^^^
+
+warning: struct `X86_64Pmu` is never constructed
+ --> src/arch/x86_64.rs:6:12
+  |
+6 | pub struct X86_64Pmu;
+  |            ^^^^^^^^^
+
+warning: multiple variants are never constructed
+   --> src/error.rs:14:5
+    |
+11  | pub enum PerfError {
+    |          --------- variants in this enum
+...
+14  |     ProcessAttach {
+    |     ^^^^^^^^^^^^^
+...
+87  |     FileParse {
+    |     ^^^^^^^^^
+...
+96  |     FileRead {
+    |     ^^^^^^^^
+...
+105 |     FileWrite {
+    |     ^^^^^^^^^
+...
+114 |     InvalidEvent {
+    |     ^^^^^^^^^^^^
+...
+123 |     SyscallError {
+    |     ^^^^^^^^^^^^
+...
+136 |     Other(String),
+    |     ^^^^^
+    |
+    = note: `PerfError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `perf-rs` (bin "perf-rs" test) generated 7 warnings (run `cargo fix --bin "perf-rs" --tests` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running unittests src/main.rs (target/debug/deps/perf_rs-b6b86a2550cda339)
+
+running 24 tests
+test cli::tests::test_cli_parsing ... ok
+test cli::tests::test_stat_command_parsing ... ok
+test core::perf_event::tests::test_counter_operations ... ok
+test cli::tests::test_report_command_parsing ... ok
+test core::perf_event::tests::test_create_counter_default ... ok
+test core::perf_event::tests::test_create_group ... ok
+test cli::tests::test_script_command_parsing ... ok
+test core::perf_event::tests::test_group_operations ... ok
+test core::perf_event::tests::test_perf_config_builder ... ok
+test cli::tests::test_record_command_parsing ... ok
+test core::perf_event::tests::test_perf_config_default ... ok
+test core::privilege::tests::test_capability_checks ... ok
+test core::privilege::tests::test_privilege_level_can_profile_kernel ... ok
+test core::privilege::tests::test_check_privilege ... ok
+test core::privilege::tests::test_ensure_privilege_kernel ... ok
+test core::privilege::tests::test_privilege_level_suggestions ... ok
+test core::privilege::tests::test_ensure_privilege_user_space ... ok
+test error::tests::test_error_display ... ok
+test core::privilege::tests::test_read_perf_event_paranoid ... ok
+test error::tests::test_file_not_found ... ok
+test error::tests::test_invalid_config ... ok
+test error::tests::test_permission_denied ... ok
+test core::privilege::tests::test_privilege_level_can_profile ... ok
+test core::privilege::tests::test_privilege_level_description ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

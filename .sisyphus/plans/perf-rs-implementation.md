@@ -595,7 +595,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/core/privilege.rs, src/core/mod.rs
   - Pre-commit: cargo check
 
-- [ ] 7. Basic perf_event wrapper
+- [x] 7. Basic perf_event wrapper
 
   **What to do**:
   - Create src/core/perf_event.rs
