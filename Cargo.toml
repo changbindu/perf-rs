@@ -1,0 +1,23 @@
+[package]
+name = "perf-rs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Linux performance monitoring tool in Rust"
+
+[dependencies]
+perf-event2 = "0.7"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+config = "0.14"
+nix = { version = "0.28", features = ["process", "signal"] }
+libc = "0.2"
+procfs = "0.16"
+gimli = "0.29"
+addr2line = { version = "0.22", features = ["object"] }
+
+[dev-dependencies]
+tempfile = "3"
