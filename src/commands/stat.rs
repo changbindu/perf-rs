@@ -1,8 +1,7 @@
 //! Performance statistics command - counts performance events for command execution.
 
 use crate::core::perf_event::{
-    add_to_group, create_group_with_config, disable_group, enable_group, read_group, Hardware,
-    PerfConfig,
+    create_counter, disable_counter, enable_counter, read_counter, Hardware, PerfConfig,
 };
 use crate::core::privilege::check_privilege;
 use crate::error::PerfError;
@@ -10,8 +9,6 @@ use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{execvp, fork, ForkResult, Pid};
-use perf_event::GroupData;
-use std::collections::HashMap;
 
 /// Parse event name string to Hardware enum.
 fn parse_event(name: &str) -> Result<Hardware> {
@@ -82,28 +79,35 @@ pub fn execute(pid: Option<u32>, event: Option<&str>, command: &[String]) -> Res
 fn run_with_pid(pid: u32, events: &[Hardware]) -> Result<()> {
     let config = PerfConfig::new().with_pid(pid).with_inherit(true);
 
-    let mut group = create_group_with_config(&config).context("Failed to create counter group")?;
-
-    let mut event_names: HashMap<u64, String> = HashMap::new();
+    let mut counters: Vec<(String, perf_event::Counter)> = Vec::new();
 
     for event in events {
-        let counter = add_to_group(&mut group, *event, &config)
-            .with_context(|| format!("Failed to add {:?} to group", event))?;
-        event_names.insert(counter.id(), format_event_name(event));
+        let counter = create_counter(*event, &config)
+            .with_context(|| format!("Failed to create {:?} counter", event))?;
+        counters.push((format_event_name(event), counter));
     }
 
-    enable_group(&mut group).context("Failed to enable counter group")?;
+    for (name, counter) in &mut counters {
+        enable_counter(counter, name)
+            .with_context(|| format!("Failed to enable {} counter", name))?;
+    }
 
     eprintln!("Monitoring process {} for 1 second...", pid);
     std::thread::sleep(std::time::Duration::from_secs(1));
 
-    disable_group(&mut group).ok();
+    for (name, counter) in &mut counters {
+        disable_counter(counter, name).ok();
+    }
 
-    let group_data = read_group(&mut group).context("Failed to read counter group")?;
+    let mut values: Vec<(String, u64)> = Vec::new();
+    for (name, counter) in &mut counters {
+        let value = read_counter(counter, name)
+            .with_context(|| format!("Failed to read {} counter", name))?;
+        values.push((name.clone(), value));
+    }
 
     display_results(
-        &group_data,
-        &event_names,
+        &values,
         &[format!("pid {}", pid)],
         WaitStatus::Exited(Pid::from_raw(pid as i32), 0),
     );
@@ -138,28 +142,35 @@ fn run_with_counters(command: &[String], events: &[Hardware]) -> Result<()> {
                 .with_pid(child.as_raw() as u32)
                 .with_inherit(true);
 
-            let mut group =
-                create_group_with_config(&config).context("Failed to create counter group")?;
-
-            let mut event_names: HashMap<u64, String> = HashMap::new();
+            let mut counters: Vec<(String, perf_event::Counter)> = Vec::new();
 
             for event in events {
-                let counter = add_to_group(&mut group, *event, &config)
-                    .with_context(|| format!("Failed to add {:?} to group", event))?;
-                event_names.insert(counter.id(), format_event_name(event));
+                let counter = create_counter(*event, &config)
+                    .with_context(|| format!("Failed to create {:?} counter", event))?;
+                counters.push((format_event_name(event), counter));
             }
 
-            enable_group(&mut group).context("Failed to enable counter group")?;
+            for (name, counter) in &mut counters {
+                enable_counter(counter, name)
+                    .with_context(|| format!("Failed to enable {} counter", name))?;
+            }
 
             kill(child, Signal::SIGCONT).context("Failed to continue child process")?;
 
             let status = waitpid(child, None).context("Failed to wait for child process")?;
 
-            disable_group(&mut group).ok();
+            for (name, counter) in &mut counters {
+                disable_counter(counter, name).ok();
+            }
 
-            let group_data = read_group(&mut group).context("Failed to read counter group")?;
+            let mut values: Vec<(String, u64)> = Vec::new();
+            for (name, counter) in &mut counters {
+                let value = read_counter(counter, name)
+                    .with_context(|| format!("Failed to read {} counter", name))?;
+                values.push((name.clone(), value));
+            }
 
-            display_results(&group_data, &event_names, command, status);
+            display_results(&values, command, status);
 
             Ok(())
         }
@@ -186,35 +197,23 @@ fn run_with_counters(command: &[String], events: &[Hardware]) -> Result<()> {
 }
 
 /// Display the performance counter results.
-fn display_results(
-    group_data: &GroupData,
-    event_names: &HashMap<u64, String>,
-    command: &[String],
-    status: WaitStatus,
-) {
+fn display_results(values: &[(String, u64)], command: &[String], status: WaitStatus) {
     println!("\n Performance counter stats for '{}':", command.join(" "));
     println!();
 
-    let mut values: Vec<(String, u64)> = Vec::new();
+    let mut sorted_values = values.to_vec();
+    sorted_values.sort_by(|a, b| a.0.cmp(&b.0));
 
-    for entry in group_data.iter() {
-        if let Some(name) = event_names.get(&entry.id()) {
-            values.push((name.clone(), entry.value()));
-        }
-    }
-
-    values.sort_by(|a, b| a.0.cmp(&b.0));
-
-    for (name, value) in &values {
+    for (name, value) in &sorted_values {
         println!("  {:>16}  {}", format_number(*value), name);
     }
 
-    let cycles = values
+    let cycles = sorted_values
         .iter()
         .find(|(name, _)| name == "cpu-cycles")
         .map(|(_, v)| *v)
         .unwrap_or(0);
-    let instructions = values
+    let instructions = sorted_values
         .iter()
         .find(|(name, _)| name == "instructions")
         .map(|(_, v)| *v)
