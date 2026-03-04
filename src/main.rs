@@ -1,5 +1,6 @@
 mod arch;
 mod cli;
+mod commands;
 mod core;
 mod error;
 
@@ -12,22 +13,14 @@ fn main() -> Result<()> {
 
     match args.command {
         Commands::List { filter, detailed } => {
-            println!(
-                "List command - filter: {:?}, detailed: {}",
-                filter, detailed
-            );
-            // TODO: Implement list subcommand
+            commands::list::execute(filter.as_deref(), detailed)?;
         }
         Commands::Stat {
             pid,
             event,
             command,
         } => {
-            println!(
-                "Stat command - pid: {:?}, event: {:?}, command: {:?}",
-                pid, event, command
-            );
-            // TODO: Implement stat subcommand
+            commands::stat::execute(pid, event.as_deref(), &command)?;
         }
         Commands::Record {
             pid,
