@@ -259,6 +259,11 @@ pub fn create_group() -> Result<Group> {
 /// let counter = add_to_group(&mut group, Hardware::INSTRUCTIONS, &PerfConfig::default())?;
 /// # Ok::<(), perf_rs::error::PerfError>(())
 /// ```
+///
+/// # Note
+///
+/// Group members must have the same pid/cpu as the group leader (kernel requirement).
+/// The `inherit` flag cannot be set on counters in a group (kernel limitation).
 pub fn add_to_group<E: Event + Clone + 'static>(
     group: &mut Group,
     event: E,
@@ -266,6 +271,9 @@ pub fn add_to_group<E: Event + Clone + 'static>(
 ) -> Result<Counter> {
     let mut builder = Builder::new(event);
 
+    // Group members must observe the same pid/cpu as the group leader.
+    // See perf-event2 docs: "any counter added to this group must observe
+    // the same set of CPUs and processes as the group itself."
     if let Some(pid) = config.pid {
         builder.observe_pid(pid as i32);
     }
@@ -277,8 +285,8 @@ pub fn add_to_group<E: Event + Clone + 'static>(
     builder
         .exclude_kernel(!config.include_kernel)
         .exclude_hv(!config.include_kernel)
-        .exclude_user(!config.include_user)
-        .inherit(config.inherit);
+        .exclude_user(!config.include_user);
+    // Note: inherit is NOT set because it's incompatible with groups (kernel limitation)
 
     group.add(&builder).map_err(|e| PerfError::CounterSetup {
         source: Box::new(e),

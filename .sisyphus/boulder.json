@@ -2,8 +2,11 @@
   "active_plan": "/home/changbin/work/perf-rs/.sisyphus/plans/perf-rs-implementation.md",
   "started_at": "2026-03-03T16:50:35.286Z",
   "session_ids": [
-    "ses_34b7ea6faffe1KKjgaL6ZbgBHb"
+    "ses_34b7ea6faffe1KKjgaL6ZbgBHb",
+    "ses_349bc918dffeazKGSYCDC6OM8J",
+    "ses_346904457ffe4wbzLsznTPso5n"
   ],
   "plan_name": "perf-rs-implementation",
-  "agent": "atlas"
+  "agent": "atlas",
+  "worktree_path": "/home/changbin/work/perf-rs"
 }

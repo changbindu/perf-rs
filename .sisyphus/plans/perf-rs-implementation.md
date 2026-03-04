@@ -660,7 +660,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/core/perf_event.rs
   - Pre-commit: cargo check
 
-- [ ] 8. perf list implementation
+- [x] 8. perf list implementation
 
   **What to do**:
   - Create src/commands/list.rs
@@ -747,7 +747,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/commands/list.rs, src/main.rs, src/commands/mod.rs
   - Pre-commit: cargo build --release
 
-- [ ] 9. perf stat - event counting
+- [x] 9. perf stat - event counting
 
   **What to do**:
   - Create src/commands/stat.rs
@@ -899,7 +899,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/commands/stat.rs
   - Pre-commit: cargo build --release
 
-- [ ] 11. perf record - ring buffer setup
+- [x] 11. perf record - ring buffer setup
 
   **What to do**:
   - Create src/core/ringbuf.rs for ring buffer management
@@ -1135,7 +1135,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/core/perf_data.rs
   - Pre-commit: cargo test --lib perf_data
 
-- [ ] 14. Symbol resolution module
+- [x] 14. Symbol resolution module
 
   **What to do**:
   - Create src/symbols/mod.rs with symbol resolution traits
