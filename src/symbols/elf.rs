@@ -32,8 +32,6 @@ impl ElfResolver {
     }
 
     /// Load symbols from an ELF file.
-    ///
-    /// This loads both ELF symbol table and DWARF debug information.
     fn load_elf(&mut self, path: &Path) -> Result<()> {
         let file = File::open(path).map_err(|e| PerfError::FileRead {
             path: path.to_path_buf(),
@@ -51,10 +49,7 @@ impl ElfResolver {
                 source: Box::new(e),
             })?;
 
-        // Load ELF symbols
         self.load_elf_symbols(&object);
-
-        // Load DWARF context for debug info
         self.load_dwarf_context(&object)?;
 
         self.loaded_path = Some(path.to_path_buf());
@@ -62,14 +57,13 @@ impl ElfResolver {
     }
 
     /// Load symbols from the ELF symbol table.
-    fn load_elf_symbols(&mut self, object: &addr2line::object::File) {
+    fn load_elf_symbols(&mut self, object: &addr2line::object::File<'_>) {
         for symbol in object.symbols() {
             let name = symbol.name().unwrap_or("");
             if name.is_empty() {
                 continue;
             }
 
-            // Only load function symbols
             if !symbol.is_definition() || symbol.kind() != addr2line::object::SymbolKind::Text {
                 continue;
             }
@@ -77,7 +71,6 @@ impl ElfResolver {
             let addr = symbol.address();
             let size = symbol.size();
 
-            // Skip symbols with invalid addresses
             if addr == 0 {
                 continue;
             }
@@ -86,7 +79,6 @@ impl ElfResolver {
             self.symbols.insert(addr, info);
         }
 
-        // Also load dynamic symbols
         for symbol in object.dynamic_symbols() {
             let name = symbol.name().unwrap_or("");
             if name.is_empty() {
@@ -104,7 +96,6 @@ impl ElfResolver {
                 continue;
             }
 
-            // Don't overwrite existing symbols
             if !self.symbols.contains_key(&addr) {
                 let info = SymbolInfo::new(name.to_string(), addr, size);
                 self.symbols.insert(addr, info);
@@ -113,15 +104,13 @@ impl ElfResolver {
     }
 
     /// Load DWARF debug context.
-    fn load_dwarf_context(&mut self, object: &addr2line::object::File) -> Result<()> {
-        // Try to create a DWARF context
+    fn load_dwarf_context(&mut self, object: &addr2line::object::File<'_>) -> Result<()> {
         match Context::new(object) {
             Ok(ctx) => {
                 self.dwarf_context = Some(ctx);
                 Ok(())
             }
             Err(_) => {
-                // DWARF info is optional; continue without it
                 self.dwarf_context = None;
                 Ok(())
             }
@@ -132,7 +121,6 @@ impl ElfResolver {
     fn resolve_dwarf_location(&self, addr: u64) -> Option<(String, u32)> {
         let ctx = self.dwarf_context.as_ref()?;
 
-        // Find the location for this address
         let loc = ctx.find_location(addr).ok()??;
 
         match (loc.file, loc.line) {
@@ -143,8 +131,6 @@ impl ElfResolver {
 
     /// Find symbol containing the given address.
     fn find_symbol_containing(&self, addr: u64) -> Option<&SymbolInfo> {
-        // Binary search could be used here for better performance
-        // For now, linear scan is acceptable for MVP
         self.symbols.values().find(|sym| sym.contains(addr))
     }
 }
@@ -157,25 +143,20 @@ impl Default for ElfResolver {
 
 impl SymbolResolver for ElfResolver {
     fn resolve(&self, addr: u64) -> Result<Option<SymbolInfo>> {
-        // First try exact match
         if let Some(mut info) = self.symbols.get(&addr).cloned() {
-            // Try to enhance with DWARF info
             if let Some((file, line)) = self.resolve_dwarf_location(addr) {
                 info = info.with_source(file, line);
             }
             return Ok(Some(info));
         }
 
-        // Try to find a symbol containing this address
         if let Some(mut info) = self.find_symbol_containing(addr).cloned() {
-            // Try to enhance with DWARF info
             if let Some((file, line)) = self.resolve_dwarf_location(addr) {
                 info = info.with_source(file, line);
             }
             return Ok(Some(info));
         }
 
-        // No symbol found
         Ok(None)
     }
 
@@ -238,17 +219,14 @@ mod tests {
             .symbols
             .insert(0x2000, SymbolInfo::new("func2".to_string(), 0x2000, 0x200));
 
-        // Exact match
         let sym = resolver.find_symbol_containing(0x1000);
         assert!(sym.is_some());
         assert_eq!(sym.unwrap().name, "func1");
 
-        // Within range
         let sym = resolver.find_symbol_containing(0x1050);
         assert!(sym.is_some());
         assert_eq!(sym.unwrap().name, "func1");
 
-        // Not in any symbol
         let sym = resolver.find_symbol_containing(0x5000);
         assert!(sym.is_none());
     }
