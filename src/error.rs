@@ -134,6 +134,61 @@ pub enum PerfError {
     /// Generic error with message.
     #[error("{0}")]
     Other(String),
+
+    /// Failed to resolve symbol.
+    #[error("Failed to resolve symbol at address {address:#x}: {reason}")]
+    SymbolResolution {
+        /// Address that failed to resolve
+        address: u64,
+        /// Reason for the failure
+        reason: String,
+    },
+
+    /// Failed to parse ELF file.
+    #[error("Failed to parse ELF file '{path}': {source}")]
+    ElfParse {
+        /// Path to the ELF file
+        path: PathBuf,
+        /// Underlying error source
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    /// Failed to parse DWARF debug info.
+    #[error("Failed to parse DWARF debug info: {reason}")]
+    DwarfParse {
+        /// Reason for the failure
+        reason: String,
+    },
+
+    /// Failed to read kernel symbols.
+    #[error("Failed to read kernel symbols: {source}")]
+    KernelSymbols {
+        /// Underlying error source
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    /// Symbol not found.
+    #[error("Symbol not found: {name}")]
+    SymbolNotFound {
+        /// Symbol name that was not found
+        name: String,
+    },
+
+    /// Failed to set up ring buffer for sampling.
+    #[error("Failed to set up ring buffer: {message}")]
+    RingBufferSetup {
+        /// Description of the failure
+        message: String,
+        /// Underlying error source
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    /// Ring buffer overflow detected.
+    #[error("Ring buffer overflow: {lost_samples} samples lost")]
+    RingBufferOverflow {
+        /// Number of samples lost
+        lost_samples: u64,
+    },
 }
 
 /// Type alias for Result with PerfError.
