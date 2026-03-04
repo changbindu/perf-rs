@@ -3,13 +3,11 @@
 use crate::core::perf_data::{PerfDataWriter, SampleEvent};
 use crate::core::perf_event::Hardware;
 use crate::core::privilege::check_privilege;
-use crate::core::ringbuf::RingBufferConfig;
 use crate::error::PerfError;
 use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{execvp, fork, ForkResult, Pid};
-use perf_event::Builder;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -106,16 +104,13 @@ pub fn execute(
 fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &str) -> Result<()> {
     eprintln!("Recording process {} ...", pid);
 
-    let counter = Builder::new(event)
-        .observe_pid(pid as i32)
-        .inherit(true)
-        .sample_period(sample_period)
-        .build()
-        .with_context(|| format!("Failed to create {:?} counter", event))?;
-
-    let ringbuf_config = RingBufferConfig::default();
-    let mut ringbuf = crate::core::ringbuf::RingBuffer::new(counter, ringbuf_config)
-        .context("Failed to create ring buffer")?;
+    let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
+        event,
+        pid as i32,
+        sample_period,
+        true,
+    )
+    .context("Failed to create ring buffer")?;
 
     ringbuf.enable().context("Failed to enable sampling")?;
 
@@ -173,16 +168,13 @@ fn record_with_command(
             waitpid(child, Some(WaitPidFlag::WUNTRACED))
                 .context("Failed to wait for child to stop")?;
 
-            let counter = Builder::new(event)
-                .observe_pid(child.as_raw())
-                .inherit(true)
-                .sample_period(sample_period)
-                .build()
-                .with_context(|| format!("Failed to create {:?} counter", event))?;
-
-            let ringbuf_config = RingBufferConfig::default();
-            let mut ringbuf = crate::core::ringbuf::RingBuffer::new(counter, ringbuf_config)
-                .context("Failed to create ring buffer")?;
+            let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
+                event,
+                child.as_raw(),
+                sample_period,
+                true,
+            )
+            .context("Failed to create ring buffer")?;
 
             let mut writer = PerfDataWriter::from_path(output_path)
                 .with_context(|| format!("Failed to create output file: {}", output_path))?;

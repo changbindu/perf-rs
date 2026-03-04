@@ -153,6 +153,67 @@ impl RingBuffer {
         Self::from_event_with_config(event, sample_period, RingBufferConfig::default())
     }
 
+    /// Create a new ring buffer to observe a specific process.
+    ///
+    /// This is a convenience method for profiling a specific PID.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The event to sample
+    /// * `pid` - The process ID to observe
+    /// * `sample_period` - The period at which to generate samples
+    /// * `inherit` - Whether child processes should inherit the counters
+    ///
+    /// # Returns
+    ///
+    /// Returns a `RingBuffer` on success, or a `PerfError` on failure.
+    pub fn from_event_for_pid<E: Event + Clone + 'static>(
+        event: E,
+        pid: i32,
+        sample_period: u64,
+        inherit: bool,
+    ) -> Result<Self> {
+        Self::from_event_for_pid_with_config(
+            event,
+            pid,
+            sample_period,
+            inherit,
+            RingBufferConfig::default(),
+        )
+    }
+
+    /// Create a new ring buffer to observe a specific process with custom configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The event to sample
+    /// * `pid` - The process ID to observe
+    /// * `sample_period` - The period at which to generate samples
+    /// * `inherit` - Whether child processes should inherit the counters
+    /// * `config` - Configuration for the ring buffer
+    ///
+    /// # Returns
+    ///
+    /// Returns a `RingBuffer` on success, or a `PerfError` on failure.
+    pub fn from_event_for_pid_with_config<E: Event + Clone + 'static>(
+        event: E,
+        pid: i32,
+        sample_period: u64,
+        inherit: bool,
+        config: RingBufferConfig,
+    ) -> Result<Self> {
+        let counter = Builder::new(event)
+            .observe_pid(pid)
+            .inherit(inherit)
+            .sample_period(sample_period)
+            .build()
+            .map_err(|e| PerfError::CounterSetup {
+                source: Box::new(e),
+            })?;
+
+        Self::new(counter, config)
+    }
+
     /// Create a new ring buffer from an event with custom configuration.
     ///
     /// # Arguments
