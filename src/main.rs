@@ -31,11 +31,14 @@ fn main() -> Result<()> {
             period,
             command,
         } => {
-            println!(
-                "Record command - pid: {:?}, output: {:?}, event: {:?}, freq: {:?}, period: {:?}, cmd: {:?}",
-                pid, output, event, frequency, period, command
-            );
-            // TODO: Implement record subcommand
+            commands::record::execute(
+                pid,
+                output.as_deref(),
+                event.as_deref(),
+                frequency,
+                period,
+                &command,
+            )?;
         }
         Commands::Report {
             input,

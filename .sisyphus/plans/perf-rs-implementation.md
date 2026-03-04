@@ -833,7 +833,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/commands/stat.rs
   - Pre-commit: cargo build --release
 
-- [ ] 10. perf stat - multi-event groups
+- [x] 10. perf stat - multi-event groups
 
   **What to do**:
   - Extend src/commands/stat.rs for multiple events
