@@ -189,6 +189,29 @@ pub enum PerfError {
         /// Number of samples lost
         lost_samples: u64,
     },
+
+    /// Invalid perf.data file magic bytes.
+    #[error("Invalid perf.data magic: expected '{expected}', got '{actual}'")]
+    InvalidMagic {
+        /// Expected magic string
+        expected: String,
+        /// Actual magic string found
+        actual: String,
+    },
+
+    /// Unsupported perf.data file version.
+    #[error("Unsupported perf.data version: {version}")]
+    UnsupportedVersion {
+        /// Version number that is unsupported
+        version: u32,
+    },
+
+    /// Invalid event type in perf.data file.
+    #[error("Invalid event type in perf.data: {event_type}")]
+    InvalidEventType {
+        /// Event type number that is invalid
+        event_type: u16,
+    },
 }
 
 /// Type alias for Result with PerfError.

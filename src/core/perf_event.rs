@@ -163,6 +163,53 @@ pub fn create_counter<E: Event + Clone + 'static>(
 /// A group allows multiple counters to be enabled/disabled atomically
 /// and ensures they measure the same time period.
 ///
+/// # Arguments
+///
+/// * `config` - Configuration options for the group (pid, cpu, etc.)
+///
+/// # Returns
+///
+/// Returns a `Group` on success, or a `PerfError` on failure.
+///
+/// # Example
+///
+/// ```no_run
+/// use perf_rs::core::perf_event::{create_group_with_config, add_to_group, PerfConfig};
+/// use perf_event::events::Hardware;
+///
+/// let config = PerfConfig::new().with_pid(1234);
+/// let mut group = create_group_with_config(&config)?;
+/// let cycles = add_to_group(&mut group, Hardware::CPU_CYCLES, &config)?;
+/// let instructions = add_to_group(&mut group, Hardware::INSTRUCTIONS, &config)?;
+///
+/// group.enable()?;
+/// // ... code to measure ...
+/// group.disable()?;
+///
+/// let counts = group.read()?;
+/// # Ok::<(), perf_rs::error::PerfError>(())
+/// ```
+pub fn create_group_with_config(config: &PerfConfig) -> Result<Group> {
+    let mut builder = Group::builder();
+
+    if let Some(pid) = config.pid {
+        builder.observe_pid(pid as i32);
+    }
+
+    if let Some(cpu) = config.cpu {
+        builder.one_cpu(cpu as usize);
+    }
+
+    builder.build_group().map_err(|e| PerfError::CounterSetup {
+        source: Box::new(e),
+    })
+}
+
+/// Create a performance counter group for the current process
+///
+/// A group allows multiple counters to be enabled/disabled atomically
+/// and ensures they measure the same time period.
+///
 /// # Returns
 ///
 /// Returns a `Group` on success, or a `PerfError` on failure.
@@ -219,29 +266,20 @@ pub fn add_to_group<E: Event + Clone + 'static>(
 ) -> Result<Counter> {
     let mut builder = Builder::new(event);
 
-    // Configure process to monitor
     if let Some(pid) = config.pid {
         builder.observe_pid(pid as i32);
-    } else {
-        builder.observe_self();
     }
 
-    // Configure CPU
     if let Some(cpu) = config.cpu {
         builder.one_cpu(cpu as usize);
-    } else {
-        builder.any_cpu();
     }
 
-    // Configure kernel/user counting
-    builder.exclude_kernel(!config.include_kernel);
-    builder.exclude_hv(!config.include_kernel);
-    builder.exclude_user(!config.include_user);
+    builder
+        .exclude_kernel(!config.include_kernel)
+        .exclude_hv(!config.include_kernel)
+        .exclude_user(!config.include_user)
+        .inherit(config.inherit);
 
-    // Configure inheritance
-    builder.inherit(config.inherit);
-
-    // Add to group
     group.add(&builder).map_err(|e| PerfError::CounterSetup {
         source: Box::new(e),
     })
