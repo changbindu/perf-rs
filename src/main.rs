@@ -46,22 +46,14 @@ fn main() -> Result<()> {
             sort,
             top,
         } => {
-            println!(
-                "Report command - input: {:?}, format: {}, sort: {:?}, top: {:?}",
-                input, format, sort, top
-            );
-            // TODO: Implement report subcommand
+            commands::report::execute(input.as_deref(), &format, sort.as_deref(), top)?;
         }
         Commands::Script {
             input,
             format,
             callchain,
         } => {
-            println!(
-                "Script command - input: {:?}, format: {}, callchain: {}",
-                input, format, callchain
-            );
-            // TODO: Implement script subcommand
+            commands::script::execute(input.as_deref(), &format, callchain)?;
         }
     }
 
