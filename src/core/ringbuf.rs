@@ -48,9 +48,11 @@ pub struct RingBufferConfig {
 impl Default for RingBufferConfig {
     fn default() -> Self {
         Self {
-            // Default to 128 pages (~512KB on most systems)
-            // This is a reasonable default for most profiling workloads
-            map_len: 128,
+            // Default to 16 pages (~64KB on most systems)
+            // This is conservative to fit within perf_event_mlock_kb limits
+            // (typically 512KB on default kernel configs)
+            // Users can increase this if they have higher limits
+            map_len: 16,
             track_lost: true,
         }
     }
@@ -479,7 +481,7 @@ mod tests {
     #[test]
     fn test_ring_buffer_config_default() {
         let config = RingBufferConfig::default();
-        assert_eq!(config.map_len, 128);
+        assert_eq!(config.map_len, 16);
         assert!(config.track_lost);
     }
 

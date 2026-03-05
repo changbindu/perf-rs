@@ -108,7 +108,7 @@ fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &
         event,
         pid as i32,
         sample_period,
-        true,
+        false, // inherit must be false for ring buffer sampling
     )
     .context("Failed to create ring buffer")?;
 
@@ -172,7 +172,7 @@ fn record_with_command(
                 event,
                 child.as_raw(),
                 sample_period,
-                true,
+                false, // inherit must be false for ring buffer sampling
             )
             .context("Failed to create ring buffer")?;
 
