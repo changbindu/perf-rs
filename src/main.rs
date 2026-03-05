@@ -1,4 +1,3 @@
-mod arch;
 mod cli;
 mod commands;
 mod core;

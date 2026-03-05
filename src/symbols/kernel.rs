@@ -124,20 +124,13 @@ impl SymbolResolver for KernelResolver {
             None => return Ok(None),
         };
 
-        // Kernel symbols don't have size info in kallsyms
-        // We estimate it as 0 (unknown)
         let info = SymbolInfo::new(sym_name.to_string(), sym_addr, 0);
 
         Ok(Some(info))
     }
 
     fn load_symbols(&mut self, _path: &Path) -> Result<()> {
-        // KernelResolver ignores path argument and always uses /proc/kallsyms
         self.load_kallsyms()
-    }
-
-    fn is_loaded(&self) -> bool {
-        self.loaded
     }
 
     fn clear(&mut self) {
@@ -153,7 +146,6 @@ mod tests {
     #[test]
     fn test_kernel_resolver_new() {
         let resolver = KernelResolver::new();
-        assert!(!resolver.is_loaded());
         assert!(resolver.symbols.is_empty());
     }
 
@@ -165,7 +157,6 @@ mod tests {
 
         resolver.clear();
 
-        assert!(!resolver.is_loaded());
         assert!(resolver.symbols.is_empty());
     }
 
@@ -219,7 +210,6 @@ mod tests {
         // Should either succeed or fail with permission denied
         match result {
             Ok(()) => {
-                assert!(resolver.is_loaded());
                 assert!(!resolver.symbols.is_empty());
             }
             Err(PerfError::PermissionDenied { .. }) => {

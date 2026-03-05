@@ -21,7 +21,7 @@ pub fn execute(input: Option<&str>, _format: &str, show_callchain: bool) -> Resu
         .with_context(|| "Failed to read events")?;
 
     let mut comm_map: HashMap<u32, String> = HashMap::new();
-    let mut resolver = MultiResolver::new();
+    let resolver = MultiResolver::new();
 
     for event in &events {
         match event {

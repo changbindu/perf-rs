@@ -165,10 +165,6 @@ impl SymbolResolver for ElfResolver {
         self.load_elf(path)
     }
 
-    fn is_loaded(&self) -> bool {
-        self.loaded_path.is_some()
-    }
-
     fn clear(&mut self) {
         self.symbols.clear();
         self.dwarf_context = None;
@@ -184,7 +180,6 @@ mod tests {
     #[test]
     fn test_elf_resolver_new() {
         let resolver = ElfResolver::new();
-        assert!(!resolver.is_loaded());
         assert!(resolver.symbols.is_empty());
     }
 
@@ -198,7 +193,6 @@ mod tests {
 
         resolver.clear();
 
-        assert!(!resolver.is_loaded());
         assert!(resolver.symbols.is_empty());
     }
 

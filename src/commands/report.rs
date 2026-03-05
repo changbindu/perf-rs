@@ -75,7 +75,7 @@ pub fn execute(
     );
     println!("{}", "-".repeat(80));
 
-    let mut resolver = MultiResolver::new();
+    let resolver = MultiResolver::new();
     for (addr, stats) in sorted {
         let overhead = if total_period > 0 {
             (stats.period as f64 / total_period as f64) * 100.0
