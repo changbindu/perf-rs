@@ -1434,7 +1434,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/commands/report.rs
   - Pre-commit: cargo build --release
 
-- [ ] 18. perf script implementation
+- [x] 18. perf script implementation
 
   **What to do**:
   - Create src/commands/script.rs
