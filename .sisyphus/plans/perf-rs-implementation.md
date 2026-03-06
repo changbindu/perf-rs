@@ -965,7 +965,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/core/ringbuf.rs
   - Pre-commit: cargo test --lib ringbuf
 
-- [ ] 12. perf record - sampling and file writing
+- [x] 12. perf record - sampling and file writing
 
   **What to do**:
   - Create src/commands/record.rs
@@ -1052,7 +1052,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/commands/record.rs
   - Pre-commit: cargo build --release
 
-- [ ] 13. perf.data file format support
+- [x] 13. perf.data file format support
 
   **What to do**:
   - Create src/core/perf_data.rs
