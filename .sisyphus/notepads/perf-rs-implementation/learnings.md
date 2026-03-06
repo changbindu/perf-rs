@@ -319,3 +319,35 @@ my_function                  # Symbol found, no debug info
 1. **Separate helpers**: Single responsibility - one formats SymbolInfo, other resolves+formats
 2. **Consistent fallback**: All unresolved addresses show as 0x{:016x}
 3. **No panic paths**: All match branches handle Ok/Err cases gracefully
+
+## [2026-03-06] Task 18: perf script implementation
+
+### Implementation Approach
+- Updated existing script.rs with complete symbol resolution integration
+- Follows same patterns as report.rs for loading symbols from mmap events
+- Helper functions for formatting: `format_timestamp()`, `format_symbol_with_source()`, `resolve_and_format()`
+
+### Key Features
+1. **Symbol Resolution**: Loads kernel symbols + ELF symbols from mmap events
+2. **Timestamp Format**: Converts nanoseconds to seconds.nanoseconds format
+3. **Symbol Offset**: Shows offset from symbol start (e.g., `main+0x10`)
+4. **Source Location**: Shows file:line when DWARF info available
+5. **Callchain Display**: Optional via `--callchain` flag
+
+### Output Format
+```
+comm              PID/TID   [CPU] timestamp: event: symbol
+sleep           1234/1234  [000] 1.123456789: cycles: main+0x10 (main.rs:42)
+```
+
+### Design Decisions
+1. **Event name defaults to "cycles"**: perf.data format doesn't store event type per sample
+2. **CPU shows [000]**: SampleEvent doesn't capture CPU (not in current format)
+3. **Comm map from TID first, then PID**: Matches standard perf behavior
+4. **Reuse helpers from report.rs**: Consistent formatting across commands
+
+### QA Verification
+- 7 new tests pass (timestamp, symbol formatting)
+- Build succeeds
+- Handles empty files gracefully ("No samples in {path}")
+- Clippy clean (pre-existing warning in elf.rs unrelated)
