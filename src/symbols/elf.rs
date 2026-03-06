@@ -96,10 +96,9 @@ impl ElfResolver {
                 continue;
             }
 
-            if !self.symbols.contains_key(&addr) {
-                let info = SymbolInfo::new(name.to_string(), addr, size);
-                self.symbols.insert(addr, info);
-            }
+            self.symbols.entry(addr).or_insert_with(|| {
+                SymbolInfo::new(name.to_string(), addr, size)
+            });
         }
     }
 
