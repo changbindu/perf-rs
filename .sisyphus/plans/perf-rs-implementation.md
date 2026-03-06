@@ -1503,7 +1503,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/commands/script.rs
   - Pre-commit: cargo build --release
 
-- [ ] 19. Multi-architecture event discovery
+- [x] 19. Multi-architecture event discovery
 
   **What to do**:
   - Implement architecture-specific PMU event enumeration
