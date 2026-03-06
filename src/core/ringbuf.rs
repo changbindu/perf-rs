@@ -1,6 +1,6 @@
 use crate::error::{PerfError, Result};
 use perf_event::events::Event;
-use perf_event::{Builder, Counter, Record, Sampler};
+use perf_event::{Builder, Counter, Record, SampleFlag, Sampler};
 
 #[derive(Debug, Clone)]
 pub struct RingBufferConfig {
@@ -56,6 +56,10 @@ impl RingBuffer {
             .any_cpu()
             .sample_period(sample_period)
             .inherit(inherit)
+            .sample(SampleFlag::IP)
+            .sample(SampleFlag::TID)
+            .sample(SampleFlag::TIME)
+            .sample(SampleFlag::CALLCHAIN)
             .build()
             .map_err(|e| PerfError::CounterSetup {
                 source: Box::new(e),

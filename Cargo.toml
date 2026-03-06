@@ -19,6 +19,7 @@ procfs = "0.16"
 gimli = "0.29"
 addr2line = { version = "0.22", features = ["object"] }
 memmap2 = "0.9"
+linux-perf-data = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

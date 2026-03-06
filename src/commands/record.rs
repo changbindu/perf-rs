@@ -126,9 +126,7 @@ fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &
         }
 
         while let Some(record) = ringbuf.next_record() {
-            let data = record.to_vec();
-
-            if let Some(sample) = parse_sample_record(&data, sample_period) {
+            if let Some(sample) = parse_sample_record(&record, sample_period) {
                 writer
                     .write_sample(&sample)
                     .context("Failed to write sample")?;
@@ -200,9 +198,7 @@ fn record_with_command(
                 }
 
                 while let Some(record) = ringbuf.next_record() {
-                    let data = record.to_vec();
-
-                    if let Some(sample) = parse_sample_record(&data, sample_period) {
+                    if let Some(sample) = parse_sample_record(&record, sample_period) {
                         writer
                             .write_sample(&sample)
                             .context("Failed to write sample")?;
@@ -264,55 +260,31 @@ fn process_exists(pid: u32) -> bool {
     std::path::Path::new(&format!("/proc/{}", pid)).exists()
 }
 
-/// Parse PERF_RECORD_SAMPLE from raw perf event data.
-///
-/// Binary format (kernel perf_event.h):
-///   offset 0-3:   header.type (u32) - must be 9 (PERF_RECORD_SAMPLE)
-///   offset 4-5:   header.misc (u16)
-///   offset 6-7:   header.size (u16)
-///   offset 8-15:  ip (u64) - instruction pointer
-///   offset 16-19: pid (u32)
-///   offset 20-23: tid (u32)
-///   offset 24-31: time (u64) - optional, depends on sample_type
-fn parse_sample_record(data: &[u8], sample_period: u64) -> Option<SampleEvent> {
-    const MIN_SIZE: usize = 24; // header(8) + ip(8) + pid(4) + tid(4)
-    const PERF_RECORD_SAMPLE: u32 = 9;
+fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> Option<SampleEvent> {
+    use perf_event::data::Record as DataRecord;
 
-    if data.len() < MIN_SIZE {
-        return None;
+    let parsed = record.parse_record().ok()?;
+
+    match parsed {
+        DataRecord::Sample(sample) => {
+            let ip = sample.ip()?;
+            let pid = sample.pid()?;
+            let tid = sample.tid()?;
+            let time = sample.time().unwrap_or(0);
+
+            let callchain = sample.callchain().map(|c| c.to_vec()).unwrap_or_default();
+
+            Some(SampleEvent::new(
+                time,
+                ip,
+                pid,
+                tid,
+                sample_period,
+                callchain,
+            ))
+        }
+        _ => None,
     }
-
-    let header_type = u32::from_ne_bytes([data[0], data[1], data[2], data[3]]);
-    if header_type != PERF_RECORD_SAMPLE {
-        return None;
-    }
-
-    let ip = u64::from_ne_bytes([
-        data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
-    ]);
-
-    let pid = u32::from_ne_bytes([data[16], data[17], data[18], data[19]]);
-    let tid = u32::from_ne_bytes([data[20], data[21], data[22], data[23]]);
-
-    let time = if data.len() >= 32 {
-        u64::from_ne_bytes([
-            data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31],
-        ])
-    } else {
-        0
-    };
-
-    // Callchain extraction requires parsing based on sample_type config (MVP: skip)
-    let callchain = Vec::new();
-
-    Some(SampleEvent::new(
-        time,
-        ip,
-        pid,
-        tid,
-        sample_period,
-        callchain,
-    ))
 }
 
 #[cfg(test)]
@@ -348,21 +320,6 @@ mod tests {
     fn test_process_exists() {
         assert!(process_exists(1));
         assert!(!process_exists(999999999));
-    }
-
-    #[test]
-    fn test_parse_sample_record_too_small() {
-        let data = [0u8; 10];
-        let result = parse_sample_record(&data, 1000);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_parse_sample_record_wrong_type() {
-        let mut data = [0u8; 32];
-        data[0] = 1; // Not PERF_RECORD_SAMPLE (9)
-        let result = parse_sample_record(&data, 1000);
-        assert!(result.is_none());
     }
 
     #[test]
