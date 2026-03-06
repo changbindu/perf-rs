@@ -180,12 +180,15 @@ fn run_with_counters(command: &[String], events: &[Hardware]) -> Result<()> {
             let program = &command[0];
             let args: Vec<std::ffi::CString> = command
                 .iter()
-                .map(|s| std::ffi::CString::new(s.as_bytes()).unwrap())
+                .map(|s| {
+                    std::ffi::CString::new(s.as_bytes())
+                        .expect("Command argument contains null byte")
+                })
                 .collect();
 
             execvp(
                 std::ffi::CString::new(program.as_bytes())
-                    .unwrap()
+                    .expect("Program name contains null byte")
                     .as_c_str(),
                 &args.iter().map(|s| s.as_c_str()).collect::<Vec<_>>(),
             )

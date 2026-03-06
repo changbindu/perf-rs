@@ -3,182 +3,121 @@
 //! This module implements the `perf list` command which displays available
 //! hardware and software performance events.
 
+use crate::arch;
+
 /// Event information for display
 struct EventInfo {
-    /// Primary name of the event
-    name: &'static str,
-    /// Alternative names (aliases)
-    aliases: Vec<&'static str>,
-    /// Event category (Hardware, Software, etc.)
-    category: &'static str,
-    /// Brief description
-    description: &'static str,
-    /// Detailed description (shown with --detailed flag)
-    detailed_description: &'static str,
+    name: String,
+    aliases: Vec<String>,
+    category: String,
+    description: String,
+    detailed_description: String,
 }
 
-/// Get all hardware events
+impl From<arch::PmuEvent> for EventInfo {
+    fn from(event: arch::PmuEvent) -> Self {
+        EventInfo {
+            name: event.name,
+            aliases: event.aliases,
+            category: event.category,
+            description: event.description.clone(),
+            detailed_description: event.description,
+        }
+    }
+}
+
+/// Get all hardware events (architecture-specific)
 fn get_hardware_events() -> Vec<EventInfo> {
-    vec![
-        EventInfo {
-            name: "cpu-cycles",
-            aliases: vec!["cycles"],
-            category: "Hardware event",
-            description: "Total cycles",
-            detailed_description: "Total cycles. Be aware of frequency scaling and turbo mode affecting this count.",
-        },
-        EventInfo {
-            name: "instructions",
-            aliases: vec![],
-            category: "Hardware event",
-            description: "Retired instructions",
-            detailed_description: "Retired instructions. This counts the number of instructions that have completed execution.",
-        },
-        EventInfo {
-            name: "cache-references",
-            aliases: vec![],
-            category: "Hardware event",
-            description: "Cache accesses",
-            detailed_description: "Cache accesses. This counts all cache accesses, both hits and misses.",
-        },
-        EventInfo {
-            name: "cache-misses",
-            aliases: vec![],
-            category: "Hardware event",
-            description: "Cache misses",
-            detailed_description: "Cache misses. This counts cache accesses that missed the cache.",
-        },
-        EventInfo {
-            name: "branch-instructions",
-            aliases: vec!["branches"],
-            category: "Hardware event",
-            description: "Retired branch instructions",
-            detailed_description: "Retired branch instructions. This counts all branch instructions that were executed.",
-        },
-        EventInfo {
-            name: "branch-misses",
-            aliases: vec![],
-            category: "Hardware event",
-            description: "Mispredicted branch instructions",
-            detailed_description: "Mispredicted branch instructions. This counts branches that were incorrectly predicted by the CPU's branch predictor.",
-        },
-        EventInfo {
-            name: "bus-cycles",
-            aliases: vec![],
-            category: "Hardware event",
-            description: "Bus cycles",
-            detailed_description: "Bus cycles. This counts cycles on the system bus.",
-        },
-        EventInfo {
-            name: "stalled-cycles-frontend",
-            aliases: vec!["idle-cycles-frontend"],
-            category: "Hardware event",
-            description: "Stalled cycles during issue",
-            detailed_description: "Stalled cycles during issue. This counts cycles where the CPU frontend (instruction fetch/decode) is stalled.",
-        },
-        EventInfo {
-            name: "stalled-cycles-backend",
-            aliases: vec!["idle-cycles-backend"],
-            category: "Hardware event",
-            description: "Stalled cycles during retirement",
-            detailed_description: "Stalled cycles during retirement. This counts cycles where the CPU backend (execution units) is stalled.",
-        },
-        EventInfo {
-            name: "ref-cycles",
-            aliases: vec![],
-            category: "Hardware event",
-            description: "Total cycles (independent of frequency scaling)",
-            detailed_description: "Total cycles, independent of frequency scaling. This uses a fixed-frequency reference clock.",
-        },
-    ]
+    let arch_events = arch::get_arch_events();
+    arch_events.into_iter().map(EventInfo::from).collect()
 }
 
 /// Get all software events
 fn get_software_events() -> Vec<EventInfo> {
     vec![
         EventInfo {
-            name: "cpu-clock",
+            name: "cpu-clock".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "High-resolution per-CPU timer",
-            detailed_description: "High-resolution per-CPU timer. This measures CPU time using the CPU's high-resolution timer.",
+            category: "Software event".to_string(),
+            description: "High-resolution per-CPU timer".to_string(),
+            detailed_description: "High-resolution per-CPU timer. This measures CPU time using the CPU's high-resolution timer.".to_string(),
         },
         EventInfo {
-            name: "task-clock",
+            name: "task-clock".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "Per-task clock count",
-            detailed_description: "Per-task clock count. This measures the time a task is running on a CPU.",
+            category: "Software event".to_string(),
+            description: "Per-task clock count".to_string(),
+            detailed_description: "Per-task clock count. This measures the time a task is running on a CPU.".to_string(),
         },
         EventInfo {
-            name: "page-faults",
-            aliases: vec!["faults"],
-            category: "Software event",
-            description: "Page faults",
-            detailed_description: "Page faults. This counts both minor and major page faults.",
+            name: "page-faults".to_string(),
+            aliases: vec!["faults".to_string()],
+            category: "Software event".to_string(),
+            description: "Page faults".to_string(),
+            detailed_description: "Page faults. This counts both minor and major page faults.".to_string(),
         },
         EventInfo {
-            name: "context-switches",
-            aliases: vec!["cs"],
-            category: "Software event",
-            description: "Context switches",
-            detailed_description: "Context switches. This counts the number of times the CPU switched from one task to another.",
+            name: "context-switches".to_string(),
+            aliases: vec!["cs".to_string()],
+            category: "Software event".to_string(),
+            description: "Context switches".to_string(),
+            detailed_description: "Context switches. This counts the number of times the CPU switched from one task to another.".to_string(),
         },
         EventInfo {
-            name: "cpu-migrations",
+            name: "cpu-migrations".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "Process migration to another CPU",
-            detailed_description: "Process migration to another CPU. This counts when a process moves from one CPU to another.",
+            category: "Software event".to_string(),
+            description: "Process migration to another CPU".to_string(),
+            detailed_description: "Process migration to another CPU. This counts when a process moves from one CPU to another.".to_string(),
         },
         EventInfo {
-            name: "minor-faults",
+            name: "minor-faults".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "Minor page faults (resolved without I/O)",
-            detailed_description: "Minor page faults. These are page faults that can be resolved without disk I/O, typically by mapping an existing page in memory.",
+            category: "Software event".to_string(),
+            description: "Minor page faults (resolved without I/O)".to_string(),
+            detailed_description: "Minor page faults. These are page faults that can be resolved without disk I/O, typically by mapping an existing page in memory.".to_string(),
         },
         EventInfo {
-            name: "major-faults",
+            name: "major-faults".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "Major page faults (I/O required)",
-            detailed_description: "Major page faults. These are page faults that require disk I/O to resolve, typically loading a page from swap or a file.",
+            category: "Software event".to_string(),
+            description: "Major page faults (I/O required)".to_string(),
+            detailed_description: "Major page faults. These are page faults that require disk I/O to resolve, typically loading a page from swap or a file.".to_string(),
         },
         EventInfo {
-            name: "alignment-faults",
+            name: "alignment-faults".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "Alignment faults (kernel intervention required)",
-            detailed_description: "Alignment faults that required kernel intervention. Note: This is only generated on some CPUs, never on x86_64 or ARM.",
+            category: "Software event".to_string(),
+            description: "Alignment faults (kernel intervention required)".to_string(),
+            detailed_description: "Alignment faults that required kernel intervention. Note: This is only generated on some CPUs, never on x86_64 or ARM.".to_string(),
         },
         EventInfo {
-            name: "emulation-faults",
+            name: "emulation-faults".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "Instruction emulation faults",
-            detailed_description: "Instruction emulation faults. This counts instructions that had to be emulated by the kernel.",
+            category: "Software event".to_string(),
+            description: "Instruction emulation faults".to_string(),
+            detailed_description: "Instruction emulation faults. This counts instructions that had to be emulated by the kernel.".to_string(),
         },
         EventInfo {
-            name: "dummy",
+            name: "dummy".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "Placeholder for collecting sample records",
-            detailed_description: "Placeholder event for collecting informational sample records without counting actual events.",
+            category: "Software event".to_string(),
+            description: "Placeholder for collecting sample records".to_string(),
+            detailed_description: "Placeholder event for collecting informational sample records without counting actual events.".to_string(),
         },
         EventInfo {
-            name: "bpf-output",
+            name: "bpf-output".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "Streaming data from eBPF programs",
-            detailed_description: "Special event type for streaming data from eBPF programs. See bpf-helpers(7) for details.",
+            category: "Software event".to_string(),
+            description: "Streaming data from eBPF programs".to_string(),
+            detailed_description: "Special event type for streaming data from eBPF programs. See bpf-helpers(7) for details.".to_string(),
         },
         EventInfo {
-            name: "cgroup-switches",
+            name: "cgroup-switches".to_string(),
             aliases: vec![],
-            category: "Software event",
-            description: "Context switches to a task in a different cgroup",
-            detailed_description: "Context switches to a task in a different cgroup. This counts switches between tasks in different cgroups.",
+            category: "Software event".to_string(),
+            description: "Context switches to a task in a different cgroup".to_string(),
+            detailed_description: "Context switches to a task in a different cgroup. This counts switches between tasks in different cgroups.".to_string(),
         },
     ]
 }
@@ -195,9 +134,9 @@ fn format_event(event: &EventInfo, detailed: bool) -> String {
     line.push_str(&format!("[{}]", event.category));
 
     let description = if detailed {
-        event.detailed_description
+        &event.detailed_description
     } else {
-        event.description
+        &event.description
     };
     line.push_str(&format!("\n    {}", description));
 
@@ -259,8 +198,8 @@ pub fn execute(filter: Option<&str>, detailed: bool) -> crate::error::Result<()>
         .filter(|e| e.category == "Software event")
         .collect();
 
-    hardware_events.sort_by_key(|e| e.name);
-    software_events.sort_by_key(|e| e.name);
+    hardware_events.sort_by_key(|e| e.name.clone());
+    software_events.sort_by_key(|e| e.name.clone());
 
     if !hardware_events.is_empty() {
         println!("\nList of hardware events:");
@@ -302,11 +241,11 @@ mod tests {
     #[test]
     fn test_matches_filter_name() {
         let event = EventInfo {
-            name: "cpu-cycles",
-            aliases: vec!["cycles"],
-            category: "Hardware event",
-            description: "Total cycles",
-            detailed_description: "Detailed description",
+            name: "cpu-cycles".to_string(),
+            aliases: vec!["cycles".to_string()],
+            category: "Hardware event".to_string(),
+            description: "Total cycles".to_string(),
+            detailed_description: "Detailed description".to_string(),
         };
 
         assert!(matches_filter(&event, "cpu"));
@@ -318,11 +257,11 @@ mod tests {
     #[test]
     fn test_matches_filter_alias() {
         let event = EventInfo {
-            name: "branch-instructions",
-            aliases: vec!["branches"],
-            category: "Hardware event",
-            description: "Retired branch instructions",
-            detailed_description: "Detailed description",
+            name: "branch-instructions".to_string(),
+            aliases: vec!["branches".to_string()],
+            category: "Hardware event".to_string(),
+            description: "Retired branch instructions".to_string(),
+            detailed_description: "Detailed description".to_string(),
         };
 
         assert!(matches_filter(&event, "branch"));
@@ -333,11 +272,11 @@ mod tests {
     #[test]
     fn test_matches_filter_category() {
         let event = EventInfo {
-            name: "cpu-cycles",
+            name: "cpu-cycles".to_string(),
             aliases: vec![],
-            category: "Hardware event",
-            description: "Total cycles",
-            detailed_description: "Detailed description",
+            category: "Hardware event".to_string(),
+            description: "Total cycles".to_string(),
+            detailed_description: "Detailed description".to_string(),
         };
 
         assert!(matches_filter(&event, "hardware"));
@@ -347,11 +286,11 @@ mod tests {
     #[test]
     fn test_format_event_simple() {
         let event = EventInfo {
-            name: "cpu-cycles",
+            name: "cpu-cycles".to_string(),
             aliases: vec![],
-            category: "Hardware event",
-            description: "Total cycles",
-            detailed_description: "Detailed description",
+            category: "Hardware event".to_string(),
+            description: "Total cycles".to_string(),
+            detailed_description: "Detailed description".to_string(),
         };
 
         let formatted = format_event(&event, false);
@@ -363,11 +302,11 @@ mod tests {
     #[test]
     fn test_format_event_detailed() {
         let event = EventInfo {
-            name: "cpu-cycles",
+            name: "cpu-cycles".to_string(),
             aliases: vec![],
-            category: "Hardware event",
-            description: "Total cycles",
-            detailed_description: "Detailed description here",
+            category: "Hardware event".to_string(),
+            description: "Total cycles".to_string(),
+            detailed_description: "Detailed description here".to_string(),
         };
 
         let formatted = format_event(&event, true);
@@ -377,11 +316,11 @@ mod tests {
     #[test]
     fn test_format_event_with_aliases() {
         let event = EventInfo {
-            name: "cpu-cycles",
-            aliases: vec!["cycles"],
-            category: "Hardware event",
-            description: "Total cycles",
-            detailed_description: "Detailed description",
+            name: "cpu-cycles".to_string(),
+            aliases: vec!["cycles".to_string()],
+            category: "Hardware event".to_string(),
+            description: "Total cycles".to_string(),
+            detailed_description: "Detailed description".to_string(),
         };
 
         let formatted = format_event(&event, false);

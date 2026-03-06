@@ -4,6 +4,10 @@
 //! event enumeration and configuration. It supports runtime architecture detection
 //! and can parse sysfs for available events on the current system.
 
+mod arm64;
+mod riscv64;
+mod x86_64;
+
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -291,7 +295,7 @@ pub fn get_arch_events() -> Vec<PmuEvent> {
 }
 
 /// Get generic events (fallback for unknown architectures)
-fn get_generic_events() -> Vec<PmuEvent> {
+pub fn get_generic_events() -> Vec<PmuEvent> {
     vec![
         PmuEvent::new("cpu-cycles", "Total cycles")
             .with_alias("cycles")
@@ -315,50 +319,17 @@ fn get_generic_events() -> Vec<PmuEvent> {
 
 /// Get x86_64-specific events
 fn get_x86_64_events() -> Vec<PmuEvent> {
-    let mut events = get_generic_events();
-
-    let discovery = SysfsEventDiscovery::new();
-    let sysfs_events = discovery.discover_cpu_events();
-
-    for sysfs_event in sysfs_events {
-        if !events.iter().any(|e| e.name == sysfs_event.name) {
-            events.push(sysfs_event);
-        }
-    }
-
-    events
+    x86_64::get_events()
 }
 
-/// Get ARM64-specific events (stub implementation)
+/// Get ARM64-specific events
 fn get_arm64_events() -> Vec<PmuEvent> {
-    let mut events = get_generic_events();
-
-    let discovery = SysfsEventDiscovery::new();
-    let sysfs_events = discovery.discover_cpu_events();
-
-    for sysfs_event in sysfs_events {
-        if !events.iter().any(|e| e.name == sysfs_event.name) {
-            events.push(sysfs_event);
-        }
-    }
-
-    events
+    arm64::get_events()
 }
 
-/// Get RISC-V 64-specific events (stub implementation)
+/// Get RISC-V 64-specific events
 fn get_riscv64_events() -> Vec<PmuEvent> {
-    let mut events = get_generic_events();
-
-    let discovery = SysfsEventDiscovery::new();
-    let sysfs_events = discovery.discover_cpu_events();
-
-    for sysfs_event in sysfs_events {
-        if !events.iter().any(|e| e.name == sysfs_event.name) {
-            events.push(sysfs_event);
-        }
-    }
-
-    events
+    riscv64::get_events()
 }
 
 #[cfg(test)]

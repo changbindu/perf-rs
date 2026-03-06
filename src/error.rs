@@ -61,6 +61,37 @@ pub enum PerfError {
     #[error("Invalid event type in perf.data: {event_type}")]
     InvalidEventType { event_type: u16 },
 
+    #[error("Failed to attach to process {pid}: {source}")]
+    ProcessAttach {
+        pid: u32,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("Failed to fork process: {source}")]
+    ProcessFork {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("Failed to execute command '{command}': {source}")]
+    CommandExecution {
+        command: String,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("Failed to send signal to process {pid}: {source}")]
+    SignalSend {
+        pid: i32,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("Failed to wait for process: {source}")]
+    ProcessWait {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("Invalid argument: {message}")]
+    InvalidArgument { message: String },
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

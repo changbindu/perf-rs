@@ -351,3 +351,64 @@ sleep           1234/1234  [000] 1.123456789: cycles: main+0x10 (main.rs:42)
 - Build succeeds
 - Handles empty files gracefully ("No samples in {path}")
 - Clippy clean (pre-existing warning in elf.rs unrelated)
+
+## [2026-03-06] Task 19: Multi-architecture event discovery
+
+### Implementation Approach
+- Created modular architecture-specific PMU event support with separate files per arch
+- Used compile-time cfg detection with runtime uname fallback for architecture identification
+- Implemented sysfs parsing for runtime event discovery from /sys/bus/event_source/devices/
+- Provided comprehensive predefined events for Intel, AMD, ARM, and RISC-V architectures
+
+### Module Structure
+```
+src/arch/
+├── mod.rs         - Common traits, arch detection, sysfs discovery, generic events
+├── x86_64.rs      - Intel and AMD specific PMU events
+├── arm64.rs       - ARM Cortex-A and Neoverse events
+└── riscv64.rs     - RISC-V standard, common, and SiFive events
+```
+
+### Key Design Decisions
+1. **Separate architecture modules**: Each architecture has its own file for maintainability
+2. **Three-tier event discovery**:
+   - Generic events (fallback, portable across all architectures)
+   - Architecture-specific predefined events (Intel/AMD/ARM/RISC-V specific)
+   - Sysfs runtime discovery (system-specific events from kernel)
+3. **PmuEvent struct**: Flexible event representation with name, aliases, description, category, and config
+4. **Event deduplication**: Sysfs events merged without duplicates with predefined events
+
+### Sysfs Event Discovery
+- Parses /sys/bus/event_source/devices/cpu/events/ for available events
+- Event format: `event=0xXX[,umask=0xXX][,cmask=0xXX][,any=N][,edge=N][,inv=N][,ldlat=N]`
+- Marks sysfs-discovered events with `from_sysfs: true` flag
+
+### Architecture Detection
+- Primary: Compile-time `#[cfg(target_arch = "...")]` for reliability
+- Fallback: Runtime `uname -m` detection for cross-compiled binaries
+- Returns `Arch` enum: X86_64, Arm64, RiscV64, Unknown
+
+### Integration with list command
+- Modified EventInfo to use String instead of &'static str for flexibility
+- Implemented From<arch::PmuEvent> for EventInfo for seamless conversion
+- Hardware events now dynamically loaded from arch module instead of hardcoded
+
+### Event Coverage
+- **Generic**: 8 events (cpu-cycles, instructions, cache-references, cache-misses, branch-instructions, branch-misses, bus-cycles, ref-cycles)
+- **Intel**: 22 events (inst_retired.*, uops_retired.*, fp_arith_inst_retired.*, etc.)
+- **AMD**: 19 events (retired_instr, dc_miss, l2_miss, etc.)
+- **ARM**: 42 events (cpu_cycles, inst_retired, l1d_cache_refill, etc.)
+- **RISC-V**: 29 events (cycles, instret, l1d_read_access, etc.)
+
+### QA Verification
+- cargo build --release: Success (warnings for unused code on non-current architectures)
+- cargo run --release -- list: Shows 8 hardware events, 12 software events
+- Architecture detection works correctly (detects x86_64 on test system)
+- Sysfs events discovered and merged with predefined events
+
+### Code Quality
+- All unsafe blocks avoided (pure safe Rust)
+- Proper error handling with Option/Result
+- Comprehensive tests for arch detection and event enumeration
+- Follows project style guidelines (snake_case functions, PascalCase types)
+- No unwrap() in production code paths
