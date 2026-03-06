@@ -1219,7 +1219,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/symbols/mod.rs, src/symbols/elf.rs, src/symbols/kernel.rs
   - Pre-commit: cargo test --lib symbols
 
-- [ ] 15. perf report - file parsing
+- [x] 15. perf report - file parsing
 
   **What to do**:
   - Create src/commands/report.rs
