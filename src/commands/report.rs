@@ -4,7 +4,24 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::core::perf_data::{Event, PerfDataReader, SampleEvent};
-use crate::symbols::{MultiResolver, SymbolResolver};
+use crate::symbols::{MultiResolver, SymbolInfo, SymbolResolver};
+
+fn format_symbol_with_source(info: &SymbolInfo) -> String {
+    match (&info.source_file, info.line) {
+        (Some(file), Some(line)) => {
+            let filename_only = file.rsplit('/').next().unwrap_or(file);
+            format!("{} ({}:{})", info.name, filename_only, line)
+        }
+        _ => info.name.clone(),
+    }
+}
+
+fn resolve_and_format(addr: u64, resolver: &MultiResolver) -> String {
+    match resolver.resolve(addr) {
+        Ok(Some(sym)) => format_symbol_with_source(&sym),
+        _ => format!("0x{:016x}", addr),
+    }
+}
 
 pub fn execute(
     input: Option<&str>,
@@ -191,10 +208,7 @@ impl CallGraph {
                 0.0
             };
 
-            let symbol_name = match resolver.resolve(**addr) {
-                Ok(Some(sym)) => sym.name,
-                _ => format!("0x{:016x}", addr),
-            };
+            let symbol_name = resolve_and_format(**addr, resolver);
 
             println!(
                 "{:>7.2}% {:>7.2}% {:>7.2}% {:>8} {:<40}",
@@ -246,10 +260,7 @@ impl CallGraph {
                 .map(|(edge, &count)| (edge.callee, count))
                 .collect();
 
-            let func_name = match resolver.resolve(**addr) {
-                Ok(Some(sym)) => sym.name,
-                _ => format!("0x{:016x}", addr),
-            };
+            let func_name = resolve_and_format(**addr, resolver);
 
             println!(
                 "{} [{}]",
@@ -263,10 +274,7 @@ impl CallGraph {
 
                 println!("  Callers:");
                 for (caller_addr, count) in sorted_callers.iter().take(5) {
-                    let caller_name = match resolver.resolve(*caller_addr) {
-                        Ok(Some(sym)) => sym.name,
-                        _ => format!("0x{:016x}", caller_addr),
-                    };
+                    let caller_name = resolve_and_format(*caller_addr, resolver);
                     let stats = self.functions.get(caller_addr);
                     let percent = if let Some(s) = stats {
                         if s.total_count > 0 {
@@ -287,10 +295,7 @@ impl CallGraph {
 
                 println!("  Callees:");
                 for (callee_addr, count) in sorted_callees.iter().take(5) {
-                    let callee_name = match resolver.resolve(*callee_addr) {
-                        Ok(Some(sym)) => sym.name,
-                        _ => format!("0x{:016x}", callee_addr),
-                    };
+                    let callee_name = resolve_and_format(*callee_addr, resolver);
                     let stats = self.functions.get(callee_addr);
                     let percent = if let Some(s) = stats {
                         if s.total_count > 0 {

@@ -284,3 +284,38 @@ let data = read_group(&mut group)?;
 - All errors use proper error chain with context
 - Follows existing command patterns from stat.rs and record.rs
 - Proper use of Result<T> with anyhow
+
+## [2026-03-06] Task 17: perf report - symbol integration
+
+### Implementation Approach
+- Added `format_symbol_with_source()` helper to format symbols with source location
+- Added `resolve_and_format()` helper to resolve address and format with fallback to hex
+- Updated all symbol display locations in `sort_and_display()` and `display_call_graph()`
+- Source location shown as "function_name (file:line)" when DWARF info available
+
+### Key Changes
+1. **Import SymbolInfo**: Added to use clause for access to symbol data
+2. **Helper functions**: Two new functions for consistent symbol formatting
+3. **Display locations updated**: 4 places where symbols are shown now use helpers
+
+### Source Location Format
+```
+main (main.rs:42)           # With DWARF debug info
+my_function                  # Symbol found, no debug info
+0x0000555555555123          # No symbol found
+```
+
+### Filename Handling
+- Uses `file.rsplit('/').next()` to extract just filename from full path
+- Falls back to full path if no '/' found
+- Avoids cluttering output with long absolute paths
+
+### QA Verification
+- 7 tests pass: all existing report tests continue to work
+- cargo check passes
+- Graceful fallback to hex when symbol resolution fails
+
+### Design Decisions
+1. **Separate helpers**: Single responsibility - one formats SymbolInfo, other resolves+formats
+2. **Consistent fallback**: All unresolved addresses show as 0x{:016x}
+3. **No panic paths**: All match branches handle Ok/Err cases gracefully
