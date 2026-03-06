@@ -62,6 +62,10 @@ impl MultiResolver {
             kernel_resolver: None,
         }
     }
+
+    pub fn set_kernel_resolver(&mut self, resolver: KernelResolver) {
+        self.kernel_resolver = Some(resolver);
+    }
 }
 
 impl Default for MultiResolver {

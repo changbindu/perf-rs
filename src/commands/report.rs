@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::core::perf_data::{Event, PerfDataReader, SampleEvent};
+use crate::symbols::{MultiResolver, SymbolResolver};
 
 pub fn execute(
     input: Option<&str>,
@@ -44,52 +45,409 @@ pub fn execute(
         return Ok(());
     }
 
-    let mut histogram: HashMap<u64, SampleStats> = HashMap::new();
+    let mut resolver = MultiResolver::new();
+
+    let mut kr = crate::symbols::KernelResolver::new();
+    if kr.load_symbols(Path::new("")).is_ok() {
+        resolver.set_kernel_resolver(kr);
+    }
+
+    for event in &events {
+        if let Event::Mmap(mmap) = event {
+            if !mmap.filename.is_empty() && Path::new(&mmap.filename).exists() {
+                let _ = resolver.load_symbols(Path::new(&mmap.filename));
+            }
+        }
+    }
+
+    let mut call_graph = CallGraph::new();
     let total_period: u64 = samples.iter().map(|s| s.period).sum();
 
     for sample in &samples {
-        let entry = histogram.entry(sample.ip).or_default();
-        entry.count += 1;
-        entry.period += sample.period;
-        entry.pid = sample.pid;
-        entry.tid = sample.tid;
+        call_graph.add_sample(sample, &resolver);
     }
 
-    let mut sorted: Vec<(&u64, &SampleStats)> = histogram.iter().collect();
-
-    let sort_field = sort.unwrap_or("overhead");
-    match sort_field {
-        "sample" => sorted.sort_by(|a, b| b.1.count.cmp(&a.1.count)),
-        "period" => sorted.sort_by(|a, b| b.1.period.cmp(&a.1.period)),
-        _ => sorted.sort_by(|a, b| b.1.period.cmp(&a.1.period)),
-    }
-
-    if let Some(n) = top {
-        sorted.truncate(n);
-    }
-
-    println!("{:>10} {:>10} {:<40}", "Overhead", "Samples", "Address");
-    println!("{}", "-".repeat(70));
-
-    for (addr, stats) in sorted {
-        let overhead = if total_period > 0 {
-            (stats.period as f64 / total_period as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        let addr_str = format!("0x{:016x}", addr);
-
-        println!("{:>9.2}% {:>10} {:<40}", overhead, stats.count, addr_str);
-    }
+    call_graph.sort_and_display(sort, top, total_period, &resolver);
 
     Ok(())
 }
 
-#[derive(Debug, Default)]
-struct SampleStats {
-    count: u64,
-    period: u64,
+#[derive(Debug, Default, Clone)]
+struct FunctionStats {
+    self_count: u64,
+    self_period: u64,
+    total_count: u64,
+    total_period: u64,
+    callchain_hits: u64,
     pid: u32,
     tid: u32,
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+struct CallEdge {
+    caller: u64,
+    callee: u64,
+}
+
+#[derive(Debug)]
+struct CallGraph {
+    functions: HashMap<u64, FunctionStats>,
+    edges: HashMap<CallEdge, u64>,
+    total_samples: u64,
+}
+
+impl CallGraph {
+    fn new() -> Self {
+        Self {
+            functions: HashMap::new(),
+            edges: HashMap::new(),
+            total_samples: 0,
+        }
+    }
+
+    fn add_sample(&mut self, sample: &SampleEvent, _resolver: &MultiResolver) {
+        self.total_samples += 1;
+
+        let ip_stats = self.functions.entry(sample.ip).or_default();
+        ip_stats.self_count += 1;
+        ip_stats.self_period += sample.period;
+        ip_stats.total_count += 1;
+        ip_stats.total_period += sample.period;
+        ip_stats.pid = sample.pid;
+        ip_stats.tid = sample.tid;
+
+        if !sample.callchain.is_empty() {
+            for (i, &addr) in sample.callchain.iter().enumerate() {
+                let stats = self.functions.entry(addr).or_default();
+
+                if i > 0 {
+                    stats.callchain_hits += 1;
+                    stats.total_count += 1;
+                    stats.total_period += sample.period;
+                }
+
+                if i + 1 < sample.callchain.len() {
+                    let edge = CallEdge {
+                        caller: sample.callchain[i + 1],
+                        callee: addr,
+                    };
+                    *self.edges.entry(edge).or_default() += 1;
+                }
+            }
+        }
+    }
+
+    fn sort_and_display(
+        &self,
+        sort: Option<&str>,
+        top: Option<usize>,
+        total_period: u64,
+        resolver: &MultiResolver,
+    ) {
+        let mut sorted: Vec<(&u64, &FunctionStats)> = self.functions.iter().collect();
+
+        let sort_field = sort.unwrap_or("overhead");
+        match sort_field {
+            "sample" => sorted.sort_by(|a, b| b.1.self_count.cmp(&a.1.self_count)),
+            "period" => sorted.sort_by(|a, b| b.1.self_period.cmp(&a.1.self_period)),
+            "overhead" => sorted.sort_by(|a, b| {
+                let a_overhead = if total_period > 0 {
+                    (b.1.self_period as f64 / total_period as f64) * 100.0
+                } else {
+                    0.0
+                };
+                let b_overhead = if total_period > 0 {
+                    (a.1.self_period as f64 / total_period as f64) * 100.0
+                } else {
+                    0.0
+                };
+                a_overhead
+                    .partial_cmp(&b_overhead)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            _ => sorted.sort_by(|a, b| b.1.self_period.cmp(&a.1.self_period)),
+        }
+
+        if let Some(n) = top {
+            sorted.truncate(n);
+        }
+
+        println!(
+            "{:>8} {:>8} {:>8} {:>8} {:<40}",
+            "Overhead", "Self", "Total", "Samples", "Function"
+        );
+        println!("{}", "-".repeat(80));
+
+        for (addr, stats) in &sorted {
+            let overhead = if total_period > 0 {
+                (stats.self_period as f64 / total_period as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let total_overhead = if total_period > 0 {
+                (stats.total_period as f64 / total_period as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let symbol_name = match resolver.resolve(**addr) {
+                Ok(Some(sym)) => sym.name,
+                _ => format!("0x{:016x}", addr),
+            };
+
+            println!(
+                "{:>7.2}% {:>7.2}% {:>7.2}% {:>8} {:<40}",
+                overhead,
+                total_overhead,
+                if stats.self_period > 0 {
+                    (stats.self_period as f64 / total_period as f64) * 100.0
+                } else {
+                    0.0
+                },
+                stats.self_count,
+                symbol_name
+            );
+        }
+
+        if !self.edges.is_empty() && !sorted.is_empty() {
+            println!();
+            self.display_call_graph(&sorted, resolver);
+        }
+    }
+
+    fn display_call_graph(
+        &self,
+        top_functions: &[(&u64, &FunctionStats)],
+        resolver: &MultiResolver,
+    ) {
+        println!("# Call Graph");
+        println!("{}", "=".repeat(80));
+        println!();
+
+        let display_count = std::cmp::min(top_functions.len(), 5);
+
+        for (idx, (addr, _stats)) in top_functions.iter().take(display_count).enumerate() {
+            if idx > 0 {
+                println!();
+            }
+
+            let callers: Vec<(u64, u64)> = self
+                .edges
+                .iter()
+                .filter(|(edge, _)| edge.callee == **addr)
+                .map(|(edge, &count)| (edge.caller, count))
+                .collect();
+
+            let callees: Vec<(u64, u64)> = self
+                .edges
+                .iter()
+                .filter(|(edge, _)| edge.caller == **addr)
+                .map(|(edge, &count)| (edge.callee, count))
+                .collect();
+
+            let func_name = match resolver.resolve(**addr) {
+                Ok(Some(sym)) => sym.name,
+                _ => format!("0x{:016x}", addr),
+            };
+
+            println!(
+                "{} [{}]",
+                func_name,
+                self.functions.get(addr).map(|s| s.self_count).unwrap_or(0)
+            );
+
+            if !callers.is_empty() {
+                let mut sorted_callers: Vec<_> = callers.into_iter().collect();
+                sorted_callers.sort_by(|a, b| b.1.cmp(&a.1));
+
+                println!("  Callers:");
+                for (caller_addr, count) in sorted_callers.iter().take(5) {
+                    let caller_name = match resolver.resolve(*caller_addr) {
+                        Ok(Some(sym)) => sym.name,
+                        _ => format!("0x{:016x}", caller_addr),
+                    };
+                    let stats = self.functions.get(caller_addr);
+                    let percent = if let Some(s) = stats {
+                        if s.total_count > 0 {
+                            (*count as f64 / s.total_count as f64) * 100.0
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    };
+                    println!("    ├── {} ({} calls, {:.1}%)", caller_name, count, percent);
+                }
+            }
+
+            if !callees.is_empty() {
+                let mut sorted_callees: Vec<_> = callees.into_iter().collect();
+                sorted_callees.sort_by(|a, b| b.1.cmp(&a.1));
+
+                println!("  Callees:");
+                for (callee_addr, count) in sorted_callees.iter().take(5) {
+                    let callee_name = match resolver.resolve(*callee_addr) {
+                        Ok(Some(sym)) => sym.name,
+                        _ => format!("0x{:016x}", callee_addr),
+                    };
+                    let stats = self.functions.get(callee_addr);
+                    let percent = if let Some(s) = stats {
+                        if s.total_count > 0 {
+                            (*count as f64 / s.total_count as f64) * 100.0
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    };
+                    println!("    ├── {} ({} calls, {:.1}%)", callee_name, count, percent);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_function_stats_default() {
+        let stats = FunctionStats::default();
+        assert_eq!(stats.self_count, 0);
+        assert_eq!(stats.self_period, 0);
+        assert_eq!(stats.total_count, 0);
+        assert_eq!(stats.total_period, 0);
+        assert_eq!(stats.callchain_hits, 0);
+    }
+
+    #[test]
+    fn test_call_graph_new() {
+        let graph = CallGraph::new();
+        assert_eq!(graph.total_samples, 0);
+        assert!(graph.functions.is_empty());
+        assert!(graph.edges.is_empty());
+    }
+
+    #[test]
+    fn test_call_graph_add_sample_no_callchain() {
+        let mut graph = CallGraph::new();
+        let resolver = MultiResolver::new();
+
+        let sample = SampleEvent::new(100, 0x1000, 1234, 5678, 1000, vec![]);
+        graph.add_sample(&sample, &resolver);
+
+        assert_eq!(graph.total_samples, 1);
+        assert!(graph.functions.contains_key(&0x1000));
+
+        let stats = graph.functions.get(&0x1000).unwrap();
+        assert_eq!(stats.self_count, 1);
+        assert_eq!(stats.self_period, 1000);
+        assert_eq!(stats.total_count, 1);
+        assert_eq!(stats.total_period, 1000);
+        assert_eq!(stats.callchain_hits, 0);
+    }
+
+    #[test]
+    fn test_call_graph_add_sample_with_callchain() {
+        let mut graph = CallGraph::new();
+        let resolver = MultiResolver::new();
+
+        let callchain = vec![0x1000, 0x2000, 0x3000];
+        let sample = SampleEvent::new(100, 0x1000, 1234, 5678, 1000, callchain);
+        graph.add_sample(&sample, &resolver);
+
+        assert_eq!(graph.total_samples, 1);
+
+        let ip_stats = graph.functions.get(&0x1000).unwrap();
+        assert_eq!(ip_stats.self_count, 1);
+        assert_eq!(ip_stats.self_period, 1000);
+        assert_eq!(ip_stats.total_count, 1);
+        assert_eq!(ip_stats.callchain_hits, 0);
+
+        let caller1_stats = graph.functions.get(&0x2000).unwrap();
+        assert_eq!(caller1_stats.self_count, 0);
+        assert_eq!(caller1_stats.self_period, 0);
+        assert_eq!(caller1_stats.total_count, 1);
+        assert_eq!(caller1_stats.total_period, 1000);
+        assert_eq!(caller1_stats.callchain_hits, 1);
+
+        let caller2_stats = graph.functions.get(&0x3000).unwrap();
+        assert_eq!(caller2_stats.self_count, 0);
+        assert_eq!(caller2_stats.self_period, 0);
+        assert_eq!(caller2_stats.total_count, 1);
+        assert_eq!(caller2_stats.total_period, 1000);
+        assert_eq!(caller2_stats.callchain_hits, 1);
+
+        assert_eq!(graph.edges.len(), 2);
+        assert_eq!(
+            *graph
+                .edges
+                .get(&CallEdge {
+                    caller: 0x2000,
+                    callee: 0x1000
+                })
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            *graph
+                .edges
+                .get(&CallEdge {
+                    caller: 0x3000,
+                    callee: 0x2000
+                })
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_call_edge_hash() {
+        let edge1 = CallEdge {
+            caller: 0x1000,
+            callee: 0x2000,
+        };
+        let edge2 = CallEdge {
+            caller: 0x1000,
+            callee: 0x2000,
+        };
+        let edge3 = CallEdge {
+            caller: 0x1000,
+            callee: 0x3000,
+        };
+
+        assert_eq!(edge1, edge2);
+        assert_ne!(edge1, edge3);
+    }
+
+    #[test]
+    fn test_multiple_samples_aggregation() {
+        let mut graph = CallGraph::new();
+        let resolver = MultiResolver::new();
+
+        let sample1 = SampleEvent::new(100, 0x1000, 1234, 5678, 500, vec![]);
+        graph.add_sample(&sample1, &resolver);
+
+        let callchain = vec![0x1000, 0x2000];
+        let sample2 = SampleEvent::new(200, 0x1000, 1234, 5678, 500, callchain);
+        graph.add_sample(&sample2, &resolver);
+
+        assert_eq!(graph.total_samples, 2);
+
+        let stats_1000 = graph.functions.get(&0x1000).unwrap();
+        assert_eq!(stats_1000.self_count, 2);
+        assert_eq!(stats_1000.self_period, 1000);
+        assert_eq!(stats_1000.total_count, 2);
+        assert_eq!(stats_1000.total_period, 1000);
+        assert_eq!(stats_1000.callchain_hits, 0);
+
+        let stats_2000 = graph.functions.get(&0x2000).unwrap();
+        assert_eq!(stats_2000.self_count, 0);
+        assert_eq!(stats_2000.self_period, 0);
+        assert_eq!(stats_2000.total_count, 1);
+        assert_eq!(stats_2000.total_period, 500);
+        assert_eq!(stats_2000.callchain_hits, 1);
+    }
 }
