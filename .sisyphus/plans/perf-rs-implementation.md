@@ -1364,7 +1364,7 @@ Max Concurrent: 7 (Waves 1 & 2)
   - Files: src/commands/report.rs
   - Pre-commit: cargo build --release
 
-- [ ] 17. perf report - symbol integration
+- [x] 17. perf report - symbol integration
 
   **What to do**:
   - Integrate symbol resolution from Task 14 into report
