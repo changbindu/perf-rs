@@ -96,9 +96,9 @@ impl ElfResolver {
                 continue;
             }
 
-            self.symbols.entry(addr).or_insert_with(|| {
-                SymbolInfo::new(name.to_string(), addr, size)
-            });
+            self.symbols
+                .entry(addr)
+                .or_insert_with(|| SymbolInfo::new(name.to_string(), addr, size));
         }
     }
 

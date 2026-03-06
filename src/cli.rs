@@ -47,6 +47,22 @@ pub enum Commands {
         #[arg(short, long, value_name = "EVENTS")]
         event: Option<String>,
 
+        /// Monitor system-wide across all CPUs
+        #[arg(short = 'a', long)]
+        all_cpus: bool,
+
+        /// Monitor specific CPUs (comma-separated list or range, e.g., '0,2,4-6')
+        #[arg(short = 'C', long, value_name = "CPUS", conflicts_with = "all_cpus")]
+        cpu: Option<String>,
+
+        /// Show per-CPU breakdown of statistics (requires -a or -C)
+        ///
+        /// Displays counter values for each CPU separately in a table format,
+        /// sorted by CPU ID then event name. Includes overhead percentages
+        /// relative to the total for each event across all monitored CPUs.
+        #[arg(long)]
+        per_cpu: bool,
+
         /// Command to execute (mutually exclusive with --pid)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
@@ -60,6 +76,14 @@ pub enum Commands {
         /// Process ID to monitor (mutually exclusive with command)
         #[arg(short, long, value_name = "PID")]
         pid: Option<u32>,
+
+        /// System-wide collection from all CPUs (mutually exclusive with --cpu)
+        #[arg(short = 'a', long, conflicts_with = "cpu")]
+        all_cpus: bool,
+
+        /// List of CPUs to monitor (e.g., 0,2,4 or 0-3)
+        #[arg(short = 'C', long, value_name = "CPUS", conflicts_with = "all_cpus")]
+        cpu: Option<String>,
 
         /// Output file for recorded data (default: perf.data)
         #[arg(short, long, value_name = "FILE")]

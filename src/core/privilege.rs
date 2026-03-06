@@ -26,6 +26,17 @@ impl PrivilegeLevel {
         matches!(self, PrivilegeLevel::Full | PrivilegeLevel::Limited)
     }
 
+    /// Check if the privilege level allows system-wide profiling.
+    ///
+    /// System-wide profiling requires either:
+    /// - `perf_event_paranoid <= 0`, or
+    /// - `CAP_PERFMON` or `CAP_SYS_ADMIN` capability
+    ///
+    /// This is stricter than regular profiling permissions.
+    pub fn can_profile_system_wide(&self) -> bool {
+        matches!(self, PrivilegeLevel::Full)
+    }
+
     pub fn suggestions(&self) -> Vec<String> {
         match self {
             PrivilegeLevel::Full => {
@@ -168,5 +179,20 @@ mod tests {
         assert!(result.is_ok());
         let value = result.unwrap();
         assert!(value >= -1 && value <= 10);
+    }
+
+    #[test]
+    fn test_can_profile_system_wide_full() {
+        assert!(PrivilegeLevel::Full.can_profile_system_wide());
+    }
+
+    #[test]
+    fn test_can_profile_system_wide_limited() {
+        assert!(!PrivilegeLevel::Limited.can_profile_system_wide());
+    }
+
+    #[test]
+    fn test_can_profile_system_wide_none() {
+        assert!(!PrivilegeLevel::None.can_profile_system_wide());
     }
 }

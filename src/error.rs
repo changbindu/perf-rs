@@ -29,6 +29,9 @@ pub enum PerfError {
     #[error("Permission denied for operation: {operation}")]
     PermissionDenied { operation: String },
 
+    #[error("System-wide profiling permission denied. Requires perf_event_paranoid <= 0 or CAP_PERFMON/CAP_SYS_ADMIN capability")]
+    SystemWidePermissionDenied,
+
     #[error("Failed to read file '{path}': {source}")]
     FileRead {
         path: PathBuf,
@@ -91,6 +94,12 @@ pub enum PerfError {
 
     #[error("Invalid argument: {message}")]
     InvalidArgument { message: String },
+
+    #[error("Invalid CPU list: {message}")]
+    InvalidCpuList { message: String },
+
+    #[error("CPU {cpu_id} out of range (max: {max_cpu})")]
+    CpuOutOfRange { cpu_id: u32, max_cpu: u32 },
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

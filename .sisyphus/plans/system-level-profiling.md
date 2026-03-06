@@ -200,7 +200,7 @@ Max Concurrent: 4 (Wave 1)
 > Implementation + Test = ONE Task. Never separate.
 > EVERY task MUST have: Recommended Agent Profile + Parallelization info + QA Scenarios.
 
-- [ ] 1. CPU Detection Utility
+- [x] 1. CPU Detection Utility
 
   **What to do**:
   - Create new module `src/core/cpu.rs`
@@ -272,7 +272,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/core/cpu.rs`, `src/core/mod.rs`
   - Pre-commit: `cargo test --lib cpu`
 
-- [ ] 2. CPU List Parser
+- [x] 2. CPU List Parser
 
   **What to do**:
   - Add CPU list parsing functions to `src/core/cpu.rs`
@@ -347,7 +347,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/core/cpu.rs`
   - Pre-commit: `cargo test --lib cpu`
 
-- [ ] 3. Privilege Check Extension
+- [x] 3. Privilege Check Extension
 
   **What to do**:
   - Extend `src/core/privilege.rs` with system-wide profiling check
@@ -409,7 +409,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/core/privilege.rs`, `src/error.rs`
   - Pre-commit: `cargo test --lib privilege`
 
-- [ ] 4. PerfConfig with_cpu() Builder
+- [x] 4. PerfConfig with_cpu() Builder
 
   **What to do**:
   - Extend `src/core/perf_event.rs` with CPU selection builders
@@ -476,7 +476,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/core/perf_event.rs`
   - Pre-commit: `cargo test --lib perf_event`
 
-- [ ] 5. RingBuffer CPU-Wide Creation
+- [x] 5. RingBuffer CPU-Wide Creation
 
   **What to do**:
   - Extend `src/core/ringbuf.rs` with CPU-wide buffer creation
@@ -551,7 +551,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/core/ringbuf.rs`
   - Pre-commit: `cargo test --lib ringbuf`
 
-- [ ] 6. CLI Flags for Stat Command
+- [x] 6. CLI Flags for Stat Command
 
   **What to do**:
   - Extend `src/cli.rs` with system-wide flags for stat command
@@ -628,7 +628,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/cli.rs`, `src/commands/stat.rs`
   - Pre-commit: `cargo build`
 
-- [ ] 7. CLI Flags for Record Command
+- [x] 7. CLI Flags for Record Command
 
   **What to do**:
   - Extend `src/cli.rs` with system-wide flags for record command
@@ -703,7 +703,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/cli.rs`, `src/commands/record.rs`
   - Pre-commit: `cargo build`
 
-- [ ] 8. System-Wide Stat Implementation (Aggregated)
+- [x] 8. System-Wide Stat Implementation (Aggregated)
 
   **What to do**:
   - Modify `src/commands/stat.rs` to support system-wide mode
@@ -801,7 +801,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/commands/stat.rs`
   - Pre-commit: `cargo test --lib commands::stat`
 
-- [ ] 9. System-Wide Stat Per-CPU Output
+- [x] 9. System-Wide Stat Per-CPU Output
 
   **What to do**:
   - Extend `src/commands/stat.rs` to support `--per-cpu` output format
@@ -887,7 +887,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/commands/stat.rs`
   - Pre-commit: `cargo test --lib commands::stat`
 
-- [ ] 10. System-Wide Record Implementation
+- [x] 10. System-Wide Record Implementation
 
   **What to do**:
   - Modify `src/commands/record.rs` to support system-wide mode
@@ -987,7 +987,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `src/commands/record.rs`
   - Pre-commit: `cargo test --lib commands::record`
 
-- [ ] 11. Integration Tests for Stat
+- [x] 11. Integration Tests for Stat
 
   **What to do**:
   - Create `tests/integration_stat.rs` for system-wide stat integration tests
@@ -1066,7 +1066,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `tests/integration_stat.rs`
   - Pre-commit: `cargo test`
 
-- [ ] 12. Integration Tests for Record
+- [x] 12. Integration Tests for Record
 
   **What to do**:
   - Create `tests/integration_record.rs` for system-wide record integration tests
@@ -1143,7 +1143,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `tests/integration_record.rs`
   - Pre-commit: `cargo test`
 
-- [ ] 13. Perf.data Compatibility Verification
+- [x] 13. Perf.data Compatibility Verification
 
   **What to do**:
   - Create `tests/perf_data_compat.rs` for perf.data format validation
@@ -1208,7 +1208,7 @@ Max Concurrent: 4 (Wave 1)
   - Files: `tests/perf_data_compat.rs`
   - Pre-commit: `cargo test`
 
-- [ ] 14. Error Handling and Edge Cases
+- [x] 14. Error Handling and Edge Cases
 
   **What to do**:
   - Review and enhance error handling across all system-wide profiling code

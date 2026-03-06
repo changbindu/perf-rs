@@ -1,5 +1,6 @@
 //! Performance recording command - collects samples for profiling.
 
+use crate::core::cpu::{get_online_cpus, parse_cpu_list, validate_cpu_ids};
 use crate::core::perf_data::{PerfDataWriter, SampleEvent};
 use crate::core::perf_event::Hardware;
 use crate::core::privilege::check_privilege;
@@ -53,6 +54,8 @@ fn setup_signal_handlers() -> Result<()> {
 
 pub fn execute(
     pid: Option<u32>,
+    all_cpus: bool,
+    cpu: Option<&str>,
     output: Option<&str>,
     event: Option<&str>,
     frequency: Option<u64>,
@@ -63,7 +66,17 @@ pub fn execute(
         operation: e.to_string(),
     })?;
 
-    if !privilege_level.can_profile() {
+    let is_system_wide = all_cpus || cpu.is_some();
+
+    if is_system_wide {
+        if !privilege_level.can_profile_system_wide() {
+            eprintln!("Error: Insufficient privileges for system-wide profiling.");
+            for suggestion in privilege_level.suggestions() {
+                eprintln!("  {}", suggestion);
+            }
+            std::process::exit(1);
+        }
+    } else if !privilege_level.can_profile() {
         eprintln!("Error: Insufficient privileges for performance monitoring.");
         for suggestion in privilege_level.suggestions() {
             eprintln!("  {}", suggestion);
@@ -77,20 +90,32 @@ pub fn execute(
         Hardware::CPU_CYCLES
     };
 
-    // Frequency to period: ~1B cycles/sec for CPU_CYCLES, divided by Hz
     let sample_period = if let Some(freq) = frequency {
         1_000_000_000u64 / freq.max(1)
     } else if let Some(p) = period {
         p
     } else {
-        1_000_000 // ~1000 Hz default
+        1_000_000
     };
 
     let output_path = output.unwrap_or("perf.data");
 
     setup_signal_handlers()?;
 
-    if let Some(target_pid) = pid {
+    if is_system_wide {
+        let cpus = if all_cpus {
+            get_online_cpus().context("Failed to get online CPUs")?
+        } else {
+            let cpu_str = cpu.unwrap();
+            let cpus = parse_cpu_list(cpu_str).context("Failed to parse CPU list")?;
+            let online_cpus = get_online_cpus().context("Failed to get online CPUs")?;
+            let max_cpu = online_cpus.iter().max().copied().unwrap_or(0);
+            validate_cpu_ids(&cpus, max_cpu).context("Invalid CPU ID in list")?;
+            cpus
+        };
+
+        record_system_wide(cpus, event, sample_period, output_path)
+    } else if let Some(target_pid) = pid {
         record_with_pid(target_pid, event, sample_period, output_path)
     } else if command.is_empty() {
         Err(anyhow::anyhow!(
@@ -108,7 +133,7 @@ fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &
         event,
         pid as i32,
         sample_period,
-        false, // inherit must be false for ring buffer sampling
+        false,
     )
     .context("Failed to create ring buffer")?;
 
@@ -170,7 +195,7 @@ fn record_with_command(
                 event,
                 child.as_raw(),
                 sample_period,
-                false, // inherit must be false for ring buffer sampling
+                false,
             )
             .context("Failed to create ring buffer")?;
 
@@ -274,6 +299,7 @@ fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> O
             let pid = sample.pid()?;
             let tid = sample.tid()?;
             let time = sample.time().unwrap_or(0);
+            let cpu = sample.cpu();
 
             let callchain = sample.callchain().map(|c| c.to_vec()).unwrap_or_default();
 
@@ -284,10 +310,78 @@ fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> O
                 tid,
                 sample_period,
                 callchain,
+                cpu,
             ))
         }
         _ => None,
     }
+}
+
+fn record_system_wide(
+    cpus: Vec<u32>,
+    event: Hardware,
+    sample_period: u64,
+    output_path: &str,
+) -> Result<()> {
+    eprintln!("Recording on CPUs: {:?}", cpus);
+
+    let mut ringbufs = Vec::with_capacity(cpus.len());
+    for &cpu in &cpus {
+        let ringbuf =
+            crate::core::ringbuf::RingBuffer::from_event_for_cpu(event, cpu, sample_period, false)
+                .with_context(|| format!("Failed to create ring buffer for CPU {}", cpu))?;
+        ringbufs.push((cpu, ringbuf));
+    }
+
+    for (cpu, ringbuf) in &mut ringbufs {
+        ringbuf
+            .enable()
+            .with_context(|| format!("Failed to enable ring buffer for CPU {}", cpu))?;
+    }
+
+    let mut writer = PerfDataWriter::from_path(output_path)
+        .with_context(|| format!("Failed to create output file: {}", output_path))?;
+
+    let start_time = Instant::now();
+    let mut sample_count = 0u64;
+    let mut total_lost = 0u64;
+
+    eprintln!("Recording... Press Ctrl+C to stop.");
+
+    while !SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+        for (_cpu, ringbuf) in &mut ringbufs {
+            while let Some(record) = ringbuf.next_record() {
+                if let Some(sample) = parse_sample_record(&record, sample_period) {
+                    writer
+                        .write_sample(&sample)
+                        .context("Failed to write sample")?;
+                    sample_count += 1;
+                }
+            }
+        }
+
+        std::thread::sleep(Duration::from_micros(100));
+    }
+
+    for (_cpu, ringbuf) in &mut ringbufs {
+        ringbuf.disable().ok();
+        total_lost += ringbuf.lost_count();
+    }
+
+    writer
+        .finalize_with_header_update()
+        .context("Failed to finalize output file")?;
+
+    let elapsed = start_time.elapsed();
+    eprintln!(
+        "Recorded {} samples in {:.2}s ({} lost)",
+        sample_count,
+        elapsed.as_secs_f64(),
+        total_lost
+    );
+    eprintln!("Saved to: {}", output_path);
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -311,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_execute_no_command() {
-        let result = execute(None, None, None, None, None, &[]);
+        let result = execute(None, false, None, None, None, None, None, &[]);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()

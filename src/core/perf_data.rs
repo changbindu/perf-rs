@@ -178,12 +178,22 @@ pub struct SampleEvent {
     pub tid: u32,
     pub period: u64,
     pub callchain: Vec<u64>,
+    pub cpu: Option<u32>,
 }
 
 impl SampleEvent {
-    pub fn new(time: u64, ip: u64, pid: u32, tid: u32, period: u64, callchain: Vec<u64>) -> Self {
+    pub fn new(
+        time: u64,
+        ip: u64,
+        pid: u32,
+        tid: u32,
+        period: u64,
+        callchain: Vec<u64>,
+        cpu: Option<u32>,
+    ) -> Self {
         let callchain_len = callchain.len() as u32;
-        let size = EVENT_HEADER_SIZE + 8 + 4 + 4 + 8 + 4 + (callchain_len as u16 * 8);
+        let cpu_size = if cpu.is_some() { 4u16 } else { 0u16 };
+        let size = EVENT_HEADER_SIZE + 8 + 4 + 4 + 8 + 4 + (callchain_len as u16 * 8) + cpu_size;
 
         let header = EventHeader::new(EventType::Sample, size, time);
 
@@ -194,6 +204,7 @@ impl SampleEvent {
             tid,
             period,
             callchain,
+            cpu,
         }
     }
 
@@ -206,6 +217,9 @@ impl SampleEvent {
         writer.write_all(&(self.callchain.len() as u32).to_le_bytes())?;
         for addr in &self.callchain {
             writer.write_all(&addr.to_le_bytes())?;
+        }
+        if let Some(cpu) = self.cpu {
+            writer.write_all(&cpu.to_le_bytes())?;
         }
         Ok(())
     }
@@ -234,6 +248,15 @@ impl SampleEvent {
             callchain.push(u64::from_le_bytes(buf8));
         }
 
+        let expected_size =
+            EVENT_HEADER_SIZE as usize + 8 + 4 + 4 + 8 + 4 + (callchain_len as usize * 8);
+        let cpu = if header.size as usize > expected_size {
+            reader.read_exact(&mut buf4)?;
+            Some(u32::from_le_bytes(buf4))
+        } else {
+            None
+        };
+
         Ok(Self {
             header,
             ip,
@@ -241,6 +264,7 @@ impl SampleEvent {
             tid,
             period,
             callchain,
+            cpu,
         })
     }
 }

@@ -35,6 +35,16 @@ impl PerfConfig {
         self
     }
 
+    pub fn with_cpu(mut self, cpu: u32) -> Self {
+        self.cpu = Some(cpu);
+        self
+    }
+
+    pub fn with_all_cpus(mut self) -> Self {
+        self.cpu = None;
+        self
+    }
+
     pub fn with_inherit(mut self, inherit: bool) -> Self {
         self.inherit = inherit;
         self
@@ -91,3 +101,43 @@ pub fn read_counter(counter: &mut Counter, event_name: &str) -> Result<u64> {
 }
 
 pub use perf_event::events::Hardware;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_with_cpu_sets_cpu_field() {
+        let config = PerfConfig::new().with_cpu(0);
+        assert_eq!(config.cpu, Some(0));
+    }
+
+    #[test]
+    fn test_with_cpu_overwrites_previous_value() {
+        let config = PerfConfig::new().with_cpu(0).with_cpu(3);
+        assert_eq!(config.cpu, Some(3));
+    }
+
+    #[test]
+    fn test_with_all_cpus_sets_cpu_to_none() {
+        let config = PerfConfig::new().with_cpu(2).with_all_cpus();
+        assert_eq!(config.cpu, None);
+    }
+
+    #[test]
+    fn test_with_all_cpus_default_is_none() {
+        let config = PerfConfig::new().with_all_cpus();
+        assert_eq!(config.cpu, None);
+    }
+
+    #[test]
+    fn test_builder_chaining_with_cpu() {
+        let config = PerfConfig::new()
+            .with_pid(1234)
+            .with_cpu(1)
+            .with_inherit(true);
+        assert_eq!(config.pid, Some(1234));
+        assert_eq!(config.cpu, Some(1));
+        assert!(config.inherit);
+    }
+}

@@ -64,17 +64,29 @@ fn run_command(args: &Cli) -> Result<()> {
         Commands::Stat {
             pid,
             event,
+            all_cpus,
+            cpu,
+            per_cpu,
             command,
         } => {
             debug!(
-                "Executing stat command: pid={:?}, event={:?}, command={:?}",
-                pid, event, command
+                "Executing stat command: pid={:?}, event={:?}, all_cpus={}, cpu={:?}, per_cpu={}, command={:?}",
+                pid, event, all_cpus, cpu, per_cpu, command
             );
-            commands::stat::execute(*pid, event.as_deref(), command)
-                .context("Failed to collect performance statistics")?;
+            commands::stat::execute(
+                *pid,
+                event.as_deref(),
+                *all_cpus,
+                cpu.as_deref(),
+                *per_cpu,
+                command,
+            )
+            .context("Failed to collect performance statistics")?;
         }
         Commands::Record {
             pid,
+            all_cpus,
+            cpu,
             output,
             event,
             frequency,
@@ -82,11 +94,13 @@ fn run_command(args: &Cli) -> Result<()> {
             command,
         } => {
             debug!(
-                "Executing record command: pid={:?}, output={:?}, event={:?}, frequency={:?}, period={:?}, command={:?}",
-                pid, output, event, frequency, period, command
+                "Executing record command: pid={:?}, all_cpus={}, cpu={:?}, output={:?}, event={:?}, frequency={:?}, period={:?}, command={:?}",
+                pid, all_cpus, cpu, output, event, frequency, period, command
             );
             commands::record::execute(
                 *pid,
+                *all_cpus,
+                cpu.as_deref(),
                 output.as_deref(),
                 event.as_deref(),
                 *frequency,
