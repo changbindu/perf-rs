@@ -78,6 +78,22 @@ pub fn execute(
     }
 
     let mut call_graph = CallGraph::new();
+
+    // First, populate mmap and comm mappings
+    for event in &events {
+        match event {
+            Event::Mmap(mmap) => {
+                if !mmap.filename.is_empty() {
+                    call_graph.add_mmap(mmap.addr, mmap.len, mmap.filename.clone());
+                }
+            }
+            Event::Comm(comm) => {
+                call_graph.add_comm(comm.pid, comm.comm.clone());
+            }
+            _ => {}
+        }
+    }
+
     let total_period: u64 = samples.iter().map(|s| s.period).sum();
 
     for sample in &samples {
@@ -98,6 +114,8 @@ struct FunctionStats {
     callchain_hits: u64,
     pid: u32,
     tid: u32,
+    shared_object: Option<String>,
+    comm: Option<String>,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -107,10 +125,19 @@ struct CallEdge {
 }
 
 #[derive(Debug)]
+struct MmapInfo {
+    addr: u64,
+    len: u64,
+    filename: String,
+}
+
+#[derive(Debug)]
 struct CallGraph {
     functions: HashMap<u64, FunctionStats>,
     edges: HashMap<CallEdge, u64>,
     total_samples: u64,
+    mmap_events: Vec<MmapInfo>,
+    comm_map: HashMap<u32, String>,
 }
 
 impl CallGraph {
@@ -119,11 +146,41 @@ impl CallGraph {
             functions: HashMap::new(),
             edges: HashMap::new(),
             total_samples: 0,
+            mmap_events: Vec::new(),
+            comm_map: HashMap::new(),
         }
+    }
+
+    fn add_mmap(&mut self, addr: u64, len: u64, filename: String) {
+        self.mmap_events.push(MmapInfo {
+            addr,
+            len,
+            filename,
+        });
+    }
+
+    fn add_comm(&mut self, pid: u32, comm: String) {
+        self.comm_map.insert(pid, comm);
+    }
+
+    fn find_shared_object(&self, addr: u64) -> Option<String> {
+        for mmap in &self.mmap_events {
+            if addr >= mmap.addr && addr < mmap.addr + mmap.len {
+                return Some(mmap.filename.clone());
+            }
+        }
+        None
+    }
+
+    fn get_comm(&self, pid: u32) -> Option<String> {
+        self.comm_map.get(&pid).cloned()
     }
 
     fn add_sample(&mut self, sample: &SampleEvent, _resolver: &MultiResolver) {
         self.total_samples += 1;
+
+        let shared_obj = self.find_shared_object(sample.ip);
+        let comm = self.get_comm(sample.pid);
 
         let ip_stats = self.functions.entry(sample.ip).or_default();
         ip_stats.self_count += 1;
@@ -133,14 +190,31 @@ impl CallGraph {
         ip_stats.pid = sample.pid;
         ip_stats.tid = sample.tid;
 
+        if ip_stats.shared_object.is_none() {
+            ip_stats.shared_object = shared_obj;
+        }
+        if ip_stats.comm.is_none() {
+            ip_stats.comm = comm;
+        }
+
         if !sample.callchain.is_empty() {
             for (i, &addr) in sample.callchain.iter().enumerate() {
+                let shared_obj = self.find_shared_object(addr);
+                let comm = self.get_comm(sample.pid);
+
                 let stats = self.functions.entry(addr).or_default();
 
                 if i > 0 {
                     stats.callchain_hits += 1;
                     stats.total_count += 1;
                     stats.total_period += sample.period;
+                }
+
+                if stats.shared_object.is_none() {
+                    stats.shared_object = shared_obj;
+                }
+                if stats.comm.is_none() {
+                    stats.comm = comm;
                 }
 
                 if i + 1 < sample.callchain.len() {
@@ -190,10 +264,10 @@ impl CallGraph {
         }
 
         println!(
-            "{:>8} {:>8} {:>8} {:>8} {:<40}",
-            "Overhead", "Self", "Total", "Samples", "Function"
+            "{:>8} {:>8} {:>8} {:>8} {:<30} {:<20} {:<15}",
+            "Overhead", "Self", "Total", "Samples", "Function", "Shared Object", "Comm"
         );
-        println!("{}", "-".repeat(80));
+        println!("{}", "-".repeat(110));
 
         for (addr, stats) in &sorted {
             let overhead = if total_period > 0 {
@@ -209,9 +283,26 @@ impl CallGraph {
             };
 
             let symbol_name = resolve_and_format(**addr, resolver);
+            let shared_obj = stats
+                .shared_object
+                .as_ref()
+                .map(|s| {
+                    let filename = s.rsplit('/').next().unwrap_or(s);
+                    if filename.len() > 18 {
+                        format!("...{}", &filename[filename.len() - 15..])
+                    } else {
+                        filename.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "[unknown]".to_string());
+            let comm = stats
+                .comm
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("[unknown]");
 
             println!(
-                "{:>7.2}% {:>7.2}% {:>7.2}% {:>8} {:<40}",
+                "{:>7.2}% {:>7.2}% {:>7.2}% {:>8} {:<30} {:<20} {:<15}",
                 overhead,
                 total_overhead,
                 if stats.self_period > 0 {
@@ -220,7 +311,9 @@ impl CallGraph {
                     0.0
                 },
                 stats.self_count,
-                symbol_name
+                symbol_name,
+                shared_obj,
+                comm
             );
         }
 
