@@ -4,7 +4,6 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::core::perf_data::{Event, PerfDataReader, SampleEvent};
-use crate::symbols::{MultiResolver, SymbolResolver};
 
 pub fn execute(
     input: Option<&str>,
@@ -69,13 +68,9 @@ pub fn execute(
         sorted.truncate(n);
     }
 
-    println!(
-        "{:>10} {:>10} {:<40} {}",
-        "Overhead", "Samples", "Function", "Module"
-    );
-    println!("{}", "-".repeat(80));
+    println!("{:>10} {:>10} {:<40}", "Overhead", "Samples", "Address");
+    println!("{}", "-".repeat(70));
 
-    let resolver = MultiResolver::new();
     for (addr, stats) in sorted {
         let overhead = if total_period > 0 {
             (stats.period as f64 / total_period as f64) * 100.0
@@ -83,15 +78,9 @@ pub fn execute(
             0.0
         };
 
-        let (func_name, module) = match resolver.resolve(*addr) {
-            Ok(Some(info)) => (info.name, String::new()),
-            _ => (format!("0x{:016x}", addr), String::new()),
-        };
+        let addr_str = format!("0x{:016x}", addr);
 
-        println!(
-            "{:>9.2}% {:>10} {:<40} {}",
-            overhead, stats.count, func_name, module
-        );
+        println!("{:>9.2}% {:>10} {:<40}", overhead, stats.count, addr_str);
     }
 
     Ok(())

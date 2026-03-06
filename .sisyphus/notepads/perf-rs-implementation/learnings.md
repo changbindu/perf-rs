@@ -235,3 +235,52 @@ let data = read_group(&mut group)?;
 - Runtime "Invalid argument" error when adding counters to group
 - Tests pass (71 total), indicating code structure is correct
 - May require kernel/hardware support for specific event combinations
+
+## [2026-03-06] Task 15: perf report - file parsing
+
+### Implementation Approach
+- Modified existing report.rs to remove symbol resolution (deferred to Task 17)
+- Uses PerfDataReader to parse perf.data files created by record command
+- Builds histogram of sample counts by address using HashMap<u64, SampleStats>
+- Calculates overhead percentages as (sample_period / total_period) * 100
+
+### Key Features Implemented
+1. **File Parsing**: PerfDataReader.from_path() reads and validates magic bytes and header
+2. **Sample Extraction**: Filter Event::Sample from all events, extract IP, PID, TID, period, callchain
+3. **Histogram Building**: Aggregate samples by instruction pointer (IP) address
+4. **Sorting Options**: Support --sort by sample count, period, or overhead (default)
+5. **Top N Results**: Support --top N to limit output
+6. **Error Handling**: Graceful handling of missing, empty, and corrupted files
+
+### Display Format
+```
+# Samples: N, MMAP events: N, COMM events: N
+
+  Overhead    Samples Address                                 
+----------------------------------------------------------------------
+     X.XX%          N 0x0000000000000000                      
+```
+
+### Design Decisions
+1. **No symbol resolution**: Task 15 focuses on file parsing, Task 17 will add symbols
+2. **SampleStats struct**: Tracks count, period, pid, tid per unique address
+3. **Hex address format**: Use 0x{:016x} for consistent 64-bit address display
+4. **Period-based overhead**: More accurate than sample count (accounts for frequency)
+
+### Error Handling Patterns
+- Missing file: "Input file not found: {path}"
+- Corrupted file: "Failed to open {path}" with context chain
+- Empty file: Same as corrupted (fails validation)
+- No samples: Friendly message "No samples found in {path}"
+
+### Testing Verification
+- Successfully parsed 13 samples from real perf.data file
+- All error scenarios handled gracefully
+- Output format matches standard perf report style
+- Cargo check and clippy pass (one unrelated warning in symbols/elf.rs)
+
+### Code Quality
+- No unwrap() in production code paths
+- All errors use proper error chain with context
+- Follows existing command patterns from stat.rs and record.rs
+- Proper use of Result<T> with anyhow
