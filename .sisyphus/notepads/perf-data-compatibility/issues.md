@@ -25,7 +25,7 @@ None at this time.
 
 - [x] Researched format specification
 - [x] Created reference files
-- [ ] Implemented writer core
-- [ ] Implemented event writers
-- [ ] Integrated with record command
-- [ ] Created validation tests
+- [x] Implemented writer core
+- [x] Implemented event writers
+- [x] Integrated with record command
+- [x] Created validation tests

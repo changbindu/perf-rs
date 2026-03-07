@@ -728,7 +728,6 @@ impl<W: Write + Seek> PerfDataWriter<W> {
         }
 
         let ids_end = self.writer.stream_position()?;
-
         let attrs_start = (ids_end + 7) & !7;
 
         let padding_to_attrs = attrs_start - ids_end;
@@ -770,18 +769,25 @@ impl<W: Write + Seek> PerfDataWriter<W> {
         Ok(())
     }
 
-    /// Write an event header
-    pub fn write_event_header(&mut self, header: &PerfEventHeader) -> io::Result<()> {
-        header.write_to(&mut self.writer)?;
-        self.data_size += header.size as u64;
-        Ok(())
-    }
-
-    /// Write a FINISHED_ROUND event
     pub fn write_finished_round(&mut self) -> io::Result<()> {
         let event = FinishedRoundEvent::new();
         event.write_to(&mut self.writer)?;
         self.data_size += PERF_FINISHED_ROUND_SIZE as u64;
+
+        let current_pos = self.writer.stream_position()?;
+        let padding = (8 - (current_pos as usize % 8)) % 8;
+        if padding > 0 {
+            writer_write_padding(&mut self.writer, padding)?;
+            self.data_size += padding as u64;
+        }
+
+        Ok(())
+    }
+
+    /// Write an event header
+    pub fn write_event_header(&mut self, header: &PerfEventHeader) -> io::Result<()> {
+        header.write_to(&mut self.writer)?;
+        self.data_size += header.size as u64;
         Ok(())
     }
 
@@ -803,6 +809,14 @@ impl<W: Write + Seek> PerfDataWriter<W> {
     pub fn write_sample(&mut self, sample: &SampleEvent) -> io::Result<()> {
         sample.write_to(&mut self.writer)?;
         self.data_size += sample.calculate_size() as u64;
+
+        let current_pos = self.writer.stream_position()?;
+        let padding = (8 - (current_pos as usize % 8)) % 8;
+        if padding > 0 {
+            writer_write_padding(&mut self.writer, padding)?;
+            self.data_size += padding as u64;
+        }
+
         Ok(())
     }
 

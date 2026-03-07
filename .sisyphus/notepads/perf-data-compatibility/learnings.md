@@ -49,3 +49,58 @@ All verified with `perf report` and `perf script`.
 - Use `byteorder` crate for explicit little-endian
 - 8-byte alignment for all records
 - Follow Linux kernel structure definitions exactly
+
+## 2026-03-07 - Task 5: Validation Tests
+
+### Test Suite Implementation
+
+1. **Test File Created**: `tests/perf_compatibility.rs` with comprehensive validation tests
+2. **Test Categories**:
+   - Empty recording (very short duration with `true`)
+   - Simple command (`ls -la`)
+   - Multi-threaded application (Rust program spawning 4 threads)
+   - Large file (high frequency recording at 1000 Hz)
+   - Very short duration (edge case with `sh -c ":"`)
+   - Specific event (instructions)
+   - Sample period (instead of frequency)
+   - System-wide recording (all CPUs)
+
+3. **Validation Approach**:
+   - Verify perf.data magic number (PERFILE2)
+   - Run `perf report` on generated files
+   - Run `perf script` on generated files
+   - Check for errors in stderr output
+   - Validate file sizes and sample counts
+
+4. **Permission Handling**:
+   - Tests use `#[ignore]` attribute requiring root/CAP_SYS_ADMIN
+   - Helper function `has_perf_permission()` checks privileges
+   - Helper function `perf_available()` checks if perf tool is installed
+
+5. **Multi-threaded Test**:
+   - Dynamically compiles a Rust test program
+   - Spawns 4 threads performing computations
+   - Validates samples from multiple threads
+
+### Test Helper Functions
+
+- `run_perf_rs()`: Execute perf-rs with arguments
+- `verify_perf_data_magic()`: Check PERFILE2 magic number
+- `perf_report()`: Run perf report and check for errors
+- `perf_script()`: Run perf script and check for errors
+- `has_perf_permission()`: Check perf event permissions
+- `perf_available()`: Check if perf tool is available
+
+### Testing Challenges
+
+1. **System-wide Recording**: Complex to automate - requires background process and SIGINT
+2. **Multi-threaded Test**: Requires rustc and temporary file compilation
+3. **High Frequency Tests**: May produce very large files
+4. **Permission Requirements**: All tests require elevated privileges
+
+### Build Status
+
+- Test file compiles successfully
+- All tests marked with `#[ignore]` to run manually with permissions
+- Uses `tempfile` crate for temporary directories
+- No new dependencies required (tempfile already in dev-dependencies)

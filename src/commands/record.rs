@@ -32,7 +32,6 @@ fn hardware_to_attr(event: Hardware, sample_period: u64) -> PerfEventAttr {
         .with_sample_period(sample_period)
         .with_comm(true)
         .with_mmap(true)
-        .with_sample_id_all(true)
 }
 
 /// Get process command name from /proc/PID/comm
@@ -47,11 +46,7 @@ fn get_process_comm(pid: u32) -> Result<String> {
 /// In real perf, this is obtained from perf_event_id system call
 fn generate_event_id() -> u64 {
     let counter = EVENT_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
-    time.wrapping_add(counter)
+    1024 + (counter % 65536)
 }
 
 /// Write COMM and MMAP events for a process
