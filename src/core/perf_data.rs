@@ -712,31 +712,14 @@ impl<W: Write + Seek> PerfDataWriter<W> {
         }
     }
 
-    /// Initialize the file header with attributes section
-    ///
-    /// This writes the file header and attributes section to the file.
-    /// After calling this method, the writer is positioned at the data section.
     pub fn initialize(&mut self, attrs: &[PerfEventAttr], ids: &[Vec<u64>]) -> io::Result<()> {
         use byteorder::{LittleEndian, WriteBytesExt};
 
         let header_start = self.writer.stream_position()?;
         self.header.write_to(&mut self.writer)?;
 
-        let attrs_offset = header_start + PERF_FILE_HEADER_SIZE;
-
-        let mut attrs_size = 0u64;
-        for (attr, id_vec) in attrs.iter().zip(ids.iter()) {
-            attr.write_to(&mut self.writer)?;
-            attrs_size += PERF_ATTR_SIZE_VER8 as u64;
-
-            let ids_offset =
-                attrs_offset + attrs_size + (ids.len() as u64 * (PERF_ATTR_SIZE_VER8 as u64 + 16));
-
-            let ids_size = id_vec.len() as u64 * 8;
-            self.writer.write_u64::<LittleEndian>(ids_offset)?;
-            self.writer.write_u64::<LittleEndian>(ids_size)?;
-            attrs_size += 16;
-        }
+        let header_end = self.writer.stream_position()?;
+        let ids_start = header_end;
 
         for id_vec in ids {
             for id in id_vec {
@@ -744,15 +727,37 @@ impl<W: Write + Seek> PerfDataWriter<W> {
             }
         }
 
+        let ids_end = self.writer.stream_position()?;
+
+        let attrs_start = (ids_end + 7) & !7;
+
+        let padding_to_attrs = attrs_start - ids_end;
+        if padding_to_attrs > 0 {
+            writer_write_padding(&mut self.writer, padding_to_attrs as usize)?;
+        }
+
+        let mut attrs_size = 0u64;
+        for (attr, id_vec) in attrs.iter().zip(ids.iter()) {
+            attr.write_to(&mut self.writer)?;
+            attrs_size += PERF_ATTR_SIZE_VER8 as u64;
+
+            let ids_offset = ids_start;
+            let ids_size = (ids_end - ids_start) as u64;
+
+            self.writer.write_u64::<LittleEndian>(ids_offset)?;
+            self.writer.write_u64::<LittleEndian>(ids_size)?;
+            attrs_size += 16;
+        }
+
         let current_pos = self.writer.stream_position()?;
         self.data_start_offset = (current_pos + 7) & !7;
 
-        let padding = self.data_start_offset - current_pos;
-        if padding > 0 {
-            writer_write_padding(&mut self.writer, padding as usize)?;
+        let padding_to_data = self.data_start_offset - current_pos;
+        if padding_to_data > 0 {
+            writer_write_padding(&mut self.writer, padding_to_data as usize)?;
         }
 
-        self.header.attrs.offset = attrs_offset;
+        self.header.attrs.offset = attrs_start;
         self.header.attrs.size = attrs_size;
         self.header.data.offset = self.data_start_offset;
         self.header.data.size = 0;

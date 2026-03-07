@@ -75,20 +75,20 @@ Implement Linux perf compatible perf.data file writer that generates files reada
 
    **Commit**: `feat(core): implement Linux perf file header and attributes`
 
-- [ ] 3. Implement Event Writers
-  - Implement SAMPLE event (IP, TID, TIME, PERIOD fields)
-  - Implement MMAP event (pid, tid, addr, len, pgoff, filename)
-  - Implement COMM event (pid, tid, comm string)
-  - Handle bit-ordered sample fields
-  - Ensure proper string null-termination and padding
+- [x] 3. Implement Event Writers
+   - Implement SAMPLE event (IP, TID, TIME, PERIOD fields)
+   - Implement MMAP event (pid, tid, addr, len, pgoff, filename)
+   - Implement COMM event (pid, tid, comm string)
+   - Handle bit-ordered sample fields
+   - Ensure proper string null-termination and padding
 
-  **Acceptance Criteria**:
-  - [ ] SAMPLE event writer implemented
-  - [ ] MMAP event writer implemented
-  - [ ] COMM event writer implemented
-  - [ ] Test: `perf script -i output.perf.data` shows samples and process names
+   **Acceptance Criteria**:
+   - [x] SAMPLE event writer implemented
+   - [x] MMAP event writer implemented
+   - [x] COMM event writer implemented
+   - [x] Test: `perf script -i output.perf.data` shows samples and process names
 
-  **Commit**: `feat(core): implement SAMPLE, MMAP, COMM event writers`
+   **Commit**: `feat(core): implement SAMPLE, MMAP, COMM event writers`
 
 - [ ] 4. Integrate with Record Command
   - Modify `src/commands/record.rs` to use new writer

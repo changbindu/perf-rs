@@ -1,7 +1,7 @@
 //! Performance recording command - collects samples for profiling.
 
 use crate::core::cpu::{get_online_cpus, parse_cpu_list, validate_cpu_ids};
-use crate::core::perf_data::{PerfDataWriter, SampleEvent};
+use crate::core::perf_data::{CommEvent, MmapEvent, PerfDataWriter, PerfEventAttr, SampleEvent};
 use crate::core::perf_event::Hardware;
 use crate::core::privilege::check_privilege;
 use crate::error::PerfError;
@@ -9,13 +9,95 @@ use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{execvp, fork, ForkResult, Pid};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+static EVENT_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 extern "C" fn signal_handler(_sig: libc::c_int) {
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+/// Convert Hardware event to PerfEventAttr for Linux perf format
+fn hardware_to_attr(event: Hardware, sample_period: u64) -> PerfEventAttr {
+    let attr_type = 0u32;
+    let config = u64::from(event);
+    let sample_type = crate::core::perf_data::PERF_SAMPLE_IP
+        | crate::core::perf_data::PERF_SAMPLE_TID
+        | crate::core::perf_data::PERF_SAMPLE_TIME
+        | crate::core::perf_data::PERF_SAMPLE_PERIOD;
+
+    PerfEventAttr::new(attr_type, config, sample_type)
+        .with_sample_period(sample_period)
+        .with_comm(true)
+        .with_mmap(true)
+        .with_sample_id_all(true)
+}
+
+/// Get process command name from /proc/PID/comm
+fn get_process_comm(pid: u32) -> Result<String> {
+    let comm_path = format!("/proc/{}/comm", pid);
+    std::fs::read_to_string(&comm_path)
+        .with_context(|| format!("Failed to read {}", comm_path))
+        .map(|s| s.trim().to_string())
+}
+
+/// Generate a fake event ID for the attribute
+/// In real perf, this is obtained from perf_event_id system call
+fn generate_event_id() -> u64 {
+    let counter = EVENT_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    time.wrapping_add(counter)
+}
+
+/// Write COMM and MMAP events for a process
+fn write_process_events(
+    writer: &mut PerfDataWriter<impl std::io::Write + std::io::Seek>,
+    pid: u32,
+    tid: u32,
+) -> Result<()> {
+    if let Ok(comm) = get_process_comm(pid) {
+        let comm_event = CommEvent::new(pid, tid, comm);
+        writer
+            .write_comm(&comm_event)
+            .context("Failed to write COMM event")?;
+    }
+
+    let maps_path = format!("/proc/{}/maps", pid);
+    if let Ok(maps_content) = std::fs::read_to_string(&maps_path) {
+        for line in maps_content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 5 {
+                if let Some(addr_range) = parts.first() {
+                    if let Some((start_str, end_str)) = addr_range.split_once('-') {
+                        if let (Ok(start), Ok(end)) = (
+                            u64::from_str_radix(start_str, 16),
+                            u64::from_str_radix(end_str, 16),
+                        ) {
+                            let addr = start;
+                            let len = end - start;
+                            let offset = 0;
+                            let filename = parts.get(5).unwrap_or(&"").to_string();
+
+                            if !filename.is_empty() && !filename.starts_with('[') {
+                                let mmap_event =
+                                    MmapEvent::new(pid, tid, addr, len, offset, filename);
+                                writer
+                                    .write_mmap(&mmap_event)
+                                    .context("Failed to write MMAP event")?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_event(name: &str) -> Result<Hardware> {
@@ -142,6 +224,14 @@ fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
+    let attr = hardware_to_attr(event, sample_period);
+    let event_id = generate_event_id();
+    writer
+        .initialize(&[attr], &[vec![event_id]])
+        .context("Failed to initialize perf.data file")?;
+
+    write_process_events(&mut writer, pid, pid).context("Failed to write process events")?;
+
     let start_time = Instant::now();
     let mut sample_count = 0u64;
 
@@ -165,7 +255,10 @@ fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &
     ringbuf.disable().ok();
 
     writer
-        .finalize_with_header_update()
+        .write_finished_round()
+        .context("Failed to write FINISHED_ROUND event")?;
+    writer
+        .finalize()
         .context("Failed to finalize output file")?;
 
     let elapsed = start_time.elapsed();
@@ -201,6 +294,15 @@ fn record_with_command(
 
             let mut writer = PerfDataWriter::from_path(output_path)
                 .with_context(|| format!("Failed to create output file: {}", output_path))?;
+
+            let attr = hardware_to_attr(event, sample_period);
+            let event_id = generate_event_id();
+            writer
+                .initialize(&[attr], &[vec![event_id]])
+                .context("Failed to initialize perf.data file")?;
+
+            write_process_events(&mut writer, child.as_raw() as u32, child.as_raw() as u32)
+                .context("Failed to write process events")?;
 
             ringbuf.enable().context("Failed to enable sampling")?;
 
@@ -239,7 +341,10 @@ fn record_with_command(
             ringbuf.disable().ok();
 
             writer
-                .finalize_with_header_update()
+                .write_finished_round()
+                .context("Failed to write FINISHED_ROUND event")?;
+            writer
+                .finalize()
                 .context("Failed to finalize output file")?;
 
             let elapsed = start_time.elapsed();
@@ -342,9 +447,19 @@ fn record_system_wide(
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
+    let attr = hardware_to_attr(event, sample_period);
+    let event_ids: Vec<Vec<u64>> = cpus.iter().map(|_| vec![generate_event_id()]).collect();
+    let attrs: Vec<PerfEventAttr> = cpus.iter().map(|_| attr.clone()).collect();
+
+    writer
+        .initialize(&attrs, &event_ids)
+        .context("Failed to initialize perf.data file")?;
+
     let start_time = Instant::now();
     let mut sample_count = 0u64;
     let mut total_lost = 0u64;
+    let mut seen_processes: std::collections::HashSet<(u32, u32)> =
+        std::collections::HashSet::new();
 
     eprintln!("Recording... Press Ctrl+C to stop.");
 
@@ -352,6 +467,16 @@ fn record_system_wide(
         for (_cpu, ringbuf) in &mut ringbufs {
             while let Some(record) = ringbuf.next_record() {
                 if let Some(sample) = parse_sample_record(&record, sample_period) {
+                    let process_key = (sample.pid, sample.tid);
+                    if seen_processes.insert(process_key) {
+                        if let Err(e) = write_process_events(&mut writer, sample.pid, sample.tid) {
+                            eprintln!(
+                                "Warning: Failed to write process events for PID {}: {}",
+                                sample.pid, e
+                            );
+                        }
+                    }
+
                     writer
                         .write_sample(&sample)
                         .context("Failed to write sample")?;
@@ -369,7 +494,10 @@ fn record_system_wide(
     }
 
     writer
-        .finalize_with_header_update()
+        .write_finished_round()
+        .context("Failed to write FINISHED_ROUND event")?;
+    writer
+        .finalize()
         .context("Failed to finalize output file")?;
 
     let elapsed = start_time.elapsed();
