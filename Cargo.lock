@@ -851,6 +851,7 @@ version = "0.1.0"
 dependencies = [
  "addr2line",
  "anyhow",
+ "byteorder",
  "clap",
  "config",
  "env_logger",
