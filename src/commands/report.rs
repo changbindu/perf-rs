@@ -435,7 +435,12 @@ mod tests {
         let mut graph = CallGraph::new();
         let resolver = MultiResolver::new();
 
-        let sample = SampleEvent::new(100, 0x1000, 1234, 5678, 1000, None, None);
+        let sample_type = crate::core::perf_data::PERF_SAMPLE_IP
+            | crate::core::perf_data::PERF_SAMPLE_TID
+            | crate::core::perf_data::PERF_SAMPLE_TIME
+            | crate::core::perf_data::PERF_SAMPLE_PERIOD;
+
+        let sample = SampleEvent::new(sample_type, 100, 0x1000, 1234, 5678, 1000, None, None);
         graph.add_sample(&sample, &resolver);
 
         assert_eq!(graph.total_samples, 1);
@@ -455,7 +460,23 @@ mod tests {
         let resolver = MultiResolver::new();
 
         let callchain = vec![0x1000, 0x2000, 0x3000];
-        let sample = SampleEvent::new(100, 0x1000, 1234, 5678, 1000, Some(callchain), None);
+
+        let sample_type = crate::core::perf_data::PERF_SAMPLE_IP
+            | crate::core::perf_data::PERF_SAMPLE_TID
+            | crate::core::perf_data::PERF_SAMPLE_TIME
+            | crate::core::perf_data::PERF_SAMPLE_PERIOD
+            | crate::core::perf_data::PERF_SAMPLE_CALLCHAIN;
+
+        let sample = SampleEvent::new(
+            sample_type,
+            100,
+            0x1000,
+            1234,
+            5678,
+            1000,
+            Some(callchain),
+            None,
+        );
         graph.add_sample(&sample, &resolver);
 
         assert_eq!(graph.total_samples, 1);
@@ -527,11 +548,29 @@ mod tests {
         let mut graph = CallGraph::new();
         let resolver = MultiResolver::new();
 
-        let sample1 = SampleEvent::new(100, 0x1000, 1234, 5678, 500, None, None);
+        let sample_type = crate::core::perf_data::PERF_SAMPLE_IP
+            | crate::core::perf_data::PERF_SAMPLE_TID
+            | crate::core::perf_data::PERF_SAMPLE_TIME
+            | crate::core::perf_data::PERF_SAMPLE_PERIOD;
+
+        let sample1 = SampleEvent::new(sample_type, 100, 0x1000, 1234, 5678, 500, None, None);
         graph.add_sample(&sample1, &resolver);
 
         let callchain = vec![0x1000, 0x2000];
-        let sample2 = SampleEvent::new(200, 0x1000, 1234, 5678, 500, Some(callchain), None);
+
+        let sample_type_with_callchain =
+            sample_type | crate::core::perf_data::PERF_SAMPLE_CALLCHAIN;
+
+        let sample2 = SampleEvent::new(
+            sample_type_with_callchain,
+            200,
+            0x1000,
+            1234,
+            5678,
+            500,
+            Some(callchain),
+            None,
+        );
         graph.add_sample(&sample2, &resolver);
 
         assert_eq!(graph.total_samples, 2);

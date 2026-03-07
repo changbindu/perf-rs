@@ -469,6 +469,11 @@ impl FinishedRoundEvent {
         self.header.write_to(writer)?;
         Ok(())
     }
+
+    pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let header = PerfEventHeader::read_from(reader)?;
+        Ok(Self { header })
+    }
 }
 
 // Sample type flags for PERF_RECORD_SAMPLE
@@ -526,10 +531,31 @@ impl MmapEvent {
         writer.write_u64::<LittleEndian>(self.len)?;
         writer.write_u64::<LittleEndian>(self.pgoff)?;
 
-        // Write null-terminated filename with padding to 8 bytes
         write_null_terminated_padded_string(writer, &self.filename, 8)?;
 
         Ok(())
+    }
+
+    pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        use byteorder::{LittleEndian, ReadBytesExt};
+
+        let header = PerfEventHeader::read_from(reader)?;
+        let pid = reader.read_u32::<LittleEndian>()?;
+        let tid = reader.read_u32::<LittleEndian>()?;
+        let addr = reader.read_u64::<LittleEndian>()?;
+        let len = reader.read_u64::<LittleEndian>()?;
+        let pgoff = reader.read_u64::<LittleEndian>()?;
+        let filename = read_null_terminated_padded_string(reader, 8)?;
+
+        Ok(Self {
+            header,
+            pid,
+            tid,
+            addr,
+            len,
+            pgoff,
+            filename,
+        })
     }
 }
 
@@ -566,10 +592,25 @@ impl CommEvent {
         writer.write_u32::<LittleEndian>(self.pid)?;
         writer.write_u32::<LittleEndian>(self.tid)?;
 
-        // Write null-terminated comm with padding to 8 bytes
         write_null_terminated_padded_string(writer, &self.comm, 8)?;
 
         Ok(())
+    }
+
+    pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        use byteorder::{LittleEndian, ReadBytesExt};
+
+        let header = PerfEventHeader::read_from(reader)?;
+        let pid = reader.read_u32::<LittleEndian>()?;
+        let tid = reader.read_u32::<LittleEndian>()?;
+        let comm = read_null_terminated_padded_string(reader, 8)?;
+
+        Ok(Self {
+            header,
+            pid,
+            tid,
+            comm,
+        })
     }
 }
 
@@ -591,6 +632,7 @@ pub struct SampleEvent {
 
 impl SampleEvent {
     pub fn new(
+        sample_type: u64,
         time: u64,
         ip: u64,
         pid: u32,
@@ -599,11 +641,7 @@ impl SampleEvent {
         callchain: Option<Vec<u64>>,
         cpu: Option<u32>,
     ) -> Self {
-        let sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD;
-        let has_callchain = callchain.as_ref().map_or(false, |cc| !cc.is_empty());
-
-        // Calculate size based on sample_type fields
-        let mut size = 6u16; // Header size
+        let mut size = 6u16;
 
         if sample_type & PERF_SAMPLE_IP != 0 {
             size += 8;
@@ -618,8 +656,9 @@ impl SampleEvent {
             size += 8;
         }
         if let Some(ref cc) = callchain {
-            // nr (8) + nr * 8 for each IP
-            size += 8 + (cc.len() as u16 * 8);
+            if !cc.is_empty() {
+                size += 8 + (cc.len() as u16 * 8);
+            }
         }
 
         Self {
@@ -663,13 +702,11 @@ impl SampleEvent {
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         use byteorder::{LittleEndian, WriteBytesExt};
 
-        // Recalculate size with actual callchain length
         let size = self.calculate_size();
         let header = PerfEventHeader::new(PERF_RECORD_SAMPLE, size);
 
         header.write_to(writer)?;
 
-        // Write fields in the order they appear in the format
         if self.sample_type & PERF_SAMPLE_IP != 0 {
             writer.write_u64::<LittleEndian>(self.ip)?;
         }
@@ -698,6 +735,59 @@ impl SampleEvent {
 
         Ok(())
     }
+
+    pub fn read_from<R: Read>(reader: &mut R, sample_type: u64) -> io::Result<Self> {
+        use byteorder::{LittleEndian, ReadBytesExt};
+
+        let header = PerfEventHeader::read_from(reader)?;
+
+        let mut ip = 0u64;
+        let mut pid = 0u32;
+        let mut tid = 0u32;
+        let mut time = 0u64;
+        let mut period = 0u64;
+        let mut callchain = None;
+
+        if sample_type & PERF_SAMPLE_IP != 0 {
+            ip = reader.read_u64::<LittleEndian>()?;
+        }
+
+        if sample_type & PERF_SAMPLE_TID != 0 {
+            pid = reader.read_u32::<LittleEndian>()?;
+            tid = reader.read_u32::<LittleEndian>()?;
+        }
+
+        if sample_type & PERF_SAMPLE_TIME != 0 {
+            time = reader.read_u64::<LittleEndian>()?;
+        }
+
+        if sample_type & PERF_SAMPLE_PERIOD != 0 {
+            period = reader.read_u64::<LittleEndian>()?;
+        }
+
+        if sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
+            let nr = reader.read_u64::<LittleEndian>()? as usize;
+            if nr > 0 {
+                let mut chain = Vec::with_capacity(nr);
+                for _ in 0..nr {
+                    chain.push(reader.read_u64::<LittleEndian>()?);
+                }
+                callchain = Some(chain);
+            }
+        }
+
+        Ok(Self {
+            header,
+            sample_type,
+            ip,
+            pid,
+            tid,
+            time,
+            period,
+            callchain,
+            cpu: None,
+        })
+    }
 }
 
 /// Helper function to write a null-terminated string with padding to specified alignment
@@ -719,6 +809,33 @@ fn write_null_terminated_padded_string<W: Write>(
     }
 
     Ok(())
+}
+
+/// Helper function to read a null-terminated string with padding to specified alignment
+fn read_null_terminated_padded_string<R: Read>(
+    reader: &mut R,
+    alignment: usize,
+) -> io::Result<String> {
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 1];
+
+    loop {
+        reader.read_exact(&mut buf)?;
+        if buf[0] == 0 {
+            break;
+        }
+        bytes.push(buf[0]);
+    }
+
+    let total_len = bytes.len() + 1;
+    let padding = (alignment - (total_len % alignment)) % alignment;
+    if padding > 0 {
+        let mut padding_buf = vec![0u8; padding];
+        reader.read_exact(&mut padding_buf)?;
+    }
+
+    String::from_utf8(bytes)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid UTF-8: {}", e)))
 }
 
 // Writer Implementation
@@ -769,7 +886,7 @@ impl<W: Write + Seek> PerfDataWriter<W> {
         }
 
         let mut attrs_size = 0u64;
-        for (attr, id_vec) in attrs.iter().zip(ids.iter()) {
+        for (attr, _id_vec) in attrs.iter().zip(ids.iter()) {
             attr.write_to(&mut self.writer)?;
             attrs_size += PERF_ATTR_SIZE_VER8 as u64;
 
@@ -1125,7 +1242,16 @@ mod tests {
 
     #[test]
     fn test_sample_event_basic() {
-        let sample = SampleEvent::new(0, 0x7f0000001000, 1234, 5678, 1000, None, None);
+        let sample = SampleEvent::new(
+            PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD,
+            0,
+            0x7f0000001000,
+            1234,
+            5678,
+            1000,
+            None,
+            None,
+        );
 
         assert_eq!(sample.header.type_, PERF_RECORD_SAMPLE);
         assert_eq!(sample.ip, 0x7f0000001000);
@@ -1136,31 +1262,26 @@ mod tests {
         let mut buffer = Vec::new();
         sample.write_to(&mut buffer).unwrap();
 
-        // Verify header
-        assert_eq!(buffer[0], 9); // SAMPLE type
-        assert_eq!(buffer[1], 0); // type MSB
+        assert_eq!(buffer[0], 9);
+        assert_eq!(buffer[1], 0);
 
-        // Verify IP field
         let ip = u64::from_le_bytes([
             buffer[6], buffer[7], buffer[8], buffer[9], buffer[10], buffer[11], buffer[12],
             buffer[13],
         ]);
         assert_eq!(ip, 0x7f0000001000);
 
-        // Verify pid/tid fields
         let pid = u32::from_le_bytes([buffer[14], buffer[15], buffer[16], buffer[17]]);
         let tid = u32::from_le_bytes([buffer[18], buffer[19], buffer[20], buffer[21]]);
         assert_eq!(pid, 1234);
         assert_eq!(tid, 5678);
 
-        // Verify time field (always present with new signature)
         let time = u64::from_le_bytes([
             buffer[22], buffer[23], buffer[24], buffer[25], buffer[26], buffer[27], buffer[28],
             buffer[29],
         ]);
         assert_eq!(time, 0);
 
-        // Verify period field (after time)
         let period = u64::from_le_bytes([
             buffer[30], buffer[31], buffer[32], buffer[33], buffer[34], buffer[35], buffer[36],
             buffer[37],
@@ -1171,6 +1292,7 @@ mod tests {
     #[test]
     fn test_sample_event_with_time() {
         let sample = SampleEvent::new(
+            PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD,
             1234567890123456,
             0x7f0000001000,
             1234,
@@ -1183,7 +1305,6 @@ mod tests {
         let mut buffer = Vec::new();
         sample.write_to(&mut buffer).unwrap();
 
-        // Verify time field (after IP, TID)
         let time = u64::from_le_bytes([
             buffer[22], buffer[23], buffer[24], buffer[25], buffer[26], buffer[27], buffer[28],
             buffer[29],
@@ -1194,46 +1315,53 @@ mod tests {
     #[test]
     fn test_sample_event_with_callchain() {
         let callchain = vec![0x7f0000001000, 0x7f0000002000, 0x7f0000003000];
-        let sample = SampleEvent::new(0, 0x7f0000001000, 0, 0, 0, Some(callchain.clone()), None);
+        let sample = SampleEvent::new(
+            PERF_SAMPLE_IP
+                | PERF_SAMPLE_TID
+                | PERF_SAMPLE_TIME
+                | PERF_SAMPLE_PERIOD
+                | PERF_SAMPLE_CALLCHAIN,
+            0,
+            0x7f0000001000,
+            0,
+            0,
+            0,
+            Some(callchain.clone()),
+            None,
+        );
 
         let mut buffer = Vec::new();
         sample.write_to(&mut buffer).unwrap();
 
-        // Verify IP field
         let ip = u64::from_le_bytes([
             buffer[6], buffer[7], buffer[8], buffer[9], buffer[10], buffer[11], buffer[12],
             buffer[13],
         ]);
         assert_eq!(ip, 0x7f0000001000);
 
-        // Verify pid/tid fields (after IP)
         let pid = u32::from_le_bytes([buffer[14], buffer[15], buffer[16], buffer[17]]);
         let tid = u32::from_le_bytes([buffer[18], buffer[19], buffer[20], buffer[21]]);
         assert_eq!(pid, 0);
         assert_eq!(tid, 0);
 
-        // Verify time field (after TID)
         let time = u64::from_le_bytes([
             buffer[22], buffer[23], buffer[24], buffer[25], buffer[26], buffer[27], buffer[28],
             buffer[29],
         ]);
         assert_eq!(time, 0);
 
-        // Verify period field (after time)
         let period = u64::from_le_bytes([
             buffer[30], buffer[31], buffer[32], buffer[33], buffer[34], buffer[35], buffer[36],
             buffer[37],
         ]);
         assert_eq!(period, 0);
 
-        // Verify callchain count (after period)
         let nr = u64::from_le_bytes([
             buffer[38], buffer[39], buffer[40], buffer[41], buffer[42], buffer[43], buffer[44],
             buffer[45],
         ]);
         assert_eq!(nr, 3);
 
-        // Verify callchain entries
         for i in 0..3 {
             let offset = 46 + (i * 8);
             let addr = u64::from_le_bytes([
@@ -1252,10 +1380,18 @@ mod tests {
 
     #[test]
     fn test_sample_event_size_calculation() {
-        let sample = SampleEvent::new(0, 0, 0, 0, 1000, None, None);
+        let sample = SampleEvent::new(
+            PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD,
+            0,
+            0,
+            0,
+            0,
+            1000,
+            None,
+            None,
+        );
 
         let size = sample.calculate_size();
-        // Header (6) + IP (8) + TID (8) + TIME (8) + PERIOD (8) = 38
         assert_eq!(size, 38);
 
         let mut buffer = Vec::new();
@@ -1273,16 +1409,22 @@ mod tests {
         let mut writer = PerfDataWriter::new(&mut buffer);
         writer.initialize(&[attr], &ids).unwrap();
 
-        // Write COMM event
         let comm = CommEvent::new(1234, 1234, "test-program".to_string());
         writer.write_comm(&comm).unwrap();
 
-        // Write MMAP event
         let mmap = MmapEvent::new(1234, 1234, 0x400000, 0x1000, 0, "/usr/bin/test".to_string());
         writer.write_mmap(&mmap).unwrap();
 
-        // Write SAMPLE event
-        let sample = SampleEvent::new(0, 0x400123, 1234, 1234, 1000, None, None);
+        let sample = SampleEvent::new(
+            PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD,
+            0,
+            0x400123,
+            1234,
+            1234,
+            1000,
+            None,
+            None,
+        );
         writer.write_sample(&sample).unwrap();
 
         writer.write_finished_round().unwrap();
@@ -1291,11 +1433,190 @@ mod tests {
 
         let data = buffer.into_inner();
         assert_eq!(&data[0..8], b"PERFILE2");
-        assert!(data.len() > 200); // Should have substantial content
+        assert!(data.len() > 200);
 
         #[cfg(feature = "evidence")]
         {
             let _ = std::fs::write(".sisyphus/evidence/test-events.perf.data", &data);
+        }
+    }
+
+    #[test]
+    fn test_finished_round_read_write() {
+        let event = FinishedRoundEvent::new();
+        let mut buffer = Vec::new();
+        event.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let read_event = FinishedRoundEvent::read_from(&mut cursor).unwrap();
+
+        assert_eq!(read_event.header.type_, PERF_RECORD_FINISHED_ROUND);
+        assert_eq!(read_event.header.size, PERF_FINISHED_ROUND_SIZE);
+    }
+
+    #[test]
+    fn test_mmap_event_read_write() {
+        let mmap = MmapEvent::new(
+            1234,
+            5678,
+            0x7f0000000000,
+            0x1000,
+            0,
+            "/usr/bin/ls".to_string(),
+        );
+
+        let mut buffer = Vec::new();
+        mmap.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let read_mmap = MmapEvent::read_from(&mut cursor).unwrap();
+
+        assert_eq!(read_mmap.header.type_, PERF_RECORD_MMAP);
+        assert_eq!(read_mmap.pid, 1234);
+        assert_eq!(read_mmap.tid, 5678);
+        assert_eq!(read_mmap.addr, 0x7f0000000000);
+        assert_eq!(read_mmap.len, 0x1000);
+        assert_eq!(read_mmap.pgoff, 0);
+        assert_eq!(read_mmap.filename, "/usr/bin/ls");
+    }
+
+    #[test]
+    fn test_mmap_event_short_filename() {
+        let mmap = MmapEvent::new(1234, 5678, 0, 0x1000, 0, "ls".to_string());
+
+        let mut buffer = Vec::new();
+        mmap.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let read_mmap = MmapEvent::read_from(&mut cursor).unwrap();
+
+        assert_eq!(read_mmap.filename, "ls");
+    }
+
+    #[test]
+    fn test_comm_event_read_write() {
+        let comm = CommEvent::new(1234, 5678, "test-program".to_string());
+
+        let mut buffer = Vec::new();
+        comm.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let read_comm = CommEvent::read_from(&mut cursor).unwrap();
+
+        assert_eq!(read_comm.header.type_, PERF_RECORD_COMM);
+        assert_eq!(read_comm.pid, 1234);
+        assert_eq!(read_comm.tid, 5678);
+        assert_eq!(read_comm.comm, "test-program");
+    }
+
+    #[test]
+    fn test_comm_event_short() {
+        let comm = CommEvent::new(1234, 5678, "sh".to_string());
+
+        let mut buffer = Vec::new();
+        comm.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let read_comm = CommEvent::read_from(&mut cursor).unwrap();
+
+        assert_eq!(read_comm.comm, "sh");
+    }
+
+    #[test]
+    fn test_sample_event_read_write_basic() {
+        let sample = SampleEvent::new(
+            PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD,
+            0,
+            0x7f0000001000,
+            1234,
+            5678,
+            1000,
+            None,
+            None,
+        );
+
+        let mut buffer = Vec::new();
+        sample.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD;
+        let read_sample = SampleEvent::read_from(&mut cursor, sample_type).unwrap();
+
+        assert_eq!(read_sample.header.type_, PERF_RECORD_SAMPLE);
+        assert_eq!(read_sample.ip, 0x7f0000001000);
+        assert_eq!(read_sample.pid, 1234);
+        assert_eq!(read_sample.tid, 5678);
+        assert_eq!(read_sample.period, 1000);
+        assert!(read_sample.callchain.is_none());
+    }
+
+    #[test]
+    fn test_sample_event_read_write_with_callchain() {
+        let callchain = vec![0x7f0000001000, 0x7f0000002000, 0x7f0000003000];
+        let sample = SampleEvent::new(
+            PERF_SAMPLE_IP
+                | PERF_SAMPLE_TID
+                | PERF_SAMPLE_TIME
+                | PERF_SAMPLE_PERIOD
+                | PERF_SAMPLE_CALLCHAIN,
+            0,
+            0x7f0000001000,
+            0,
+            0,
+            0,
+            Some(callchain.clone()),
+            None,
+        );
+
+        let mut buffer = Vec::new();
+        sample.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let sample_type = PERF_SAMPLE_IP
+            | PERF_SAMPLE_TID
+            | PERF_SAMPLE_TIME
+            | PERF_SAMPLE_PERIOD
+            | PERF_SAMPLE_CALLCHAIN;
+        let read_sample = SampleEvent::read_from(&mut cursor, sample_type).unwrap();
+
+        assert_eq!(read_sample.ip, 0x7f0000001000);
+        assert!(read_sample.callchain.is_some());
+        let read_callchain = read_sample.callchain.unwrap();
+        assert_eq!(read_callchain.len(), 3);
+        assert_eq!(read_callchain, callchain);
+    }
+
+    #[test]
+    fn test_sample_event_variable_fields() {
+        let sample_type_ip_only = PERF_SAMPLE_IP;
+        let sample = SampleEvent::new(sample_type_ip_only, 0, 0x7f0000001000, 0, 0, 0, None, None);
+
+        let mut buffer = Vec::new();
+        sample.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let read_sample = SampleEvent::read_from(&mut cursor, sample_type_ip_only).unwrap();
+
+        assert_eq!(read_sample.ip, 0x7f0000001000);
+        assert_eq!(read_sample.pid, 0);
+        assert_eq!(read_sample.tid, 0);
+        assert_eq!(read_sample.time, 0);
+        assert_eq!(read_sample.period, 0);
+    }
+
+    #[test]
+    fn test_read_null_terminated_padded_string() {
+        let test_strings = vec!["test", "a", "longer-string-name", ""];
+        let alignment = 8;
+
+        for s in test_strings {
+            let mut buffer = Vec::new();
+            write_null_terminated_padded_string(&mut buffer, s, alignment).unwrap();
+
+            let mut cursor = Cursor::new(buffer);
+            let read_s = read_null_terminated_padded_string(&mut cursor, alignment).unwrap();
+
+            assert_eq!(read_s, s, "Failed for string: '{}'", s);
         }
     }
 }
@@ -1316,7 +1637,7 @@ pub struct PerfDataReader<R: Read + Seek> {
 
 impl<R: Read + Seek> PerfDataReader<R> {
     /// Create a new reader from a generic reader that supports Read and Seek
-    pub fn from_reader(mut reader: R) -> io::Result<Self> {
+    pub fn from_reader(reader: R) -> io::Result<Self> {
         let mut data_reader = Self {
             reader,
             header: PerfFileHeader::default(),

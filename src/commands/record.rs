@@ -403,7 +403,14 @@ fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> O
 
             let callchain = sample.callchain().map(|c| c.to_vec()).unwrap_or_default();
 
+            let sample_type = crate::core::perf_data::PERF_SAMPLE_IP
+                | crate::core::perf_data::PERF_SAMPLE_TID
+                | crate::core::perf_data::PERF_SAMPLE_TIME
+                | crate::core::perf_data::PERF_SAMPLE_PERIOD
+                | crate::core::perf_data::PERF_SAMPLE_CALLCHAIN;
+
             Some(SampleEvent::new(
+                sample_type,
                 time,
                 ip,
                 pid,
