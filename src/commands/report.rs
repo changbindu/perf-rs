@@ -39,15 +39,28 @@ pub fn execute(
         .with_context(|| format!("Failed to open {}", input_path))?;
 
     let header = reader.header();
-    println!(
-        "# Samples: {}, MMAP events: {}, COMM events: {}",
-        header.sample_count, header.mmap_count, header.comm_count
-    );
-    println!();
-
     let events = reader
         .read_all_events()
         .with_context(|| "Failed to read events")?;
+
+    let sample_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::Sample(_)))
+        .count();
+    let mmap_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::Mmap(_)))
+        .count();
+    let comm_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::Comm(_)))
+        .count();
+
+    println!(
+        "# Samples: {}, MMAP events: {}, COMM events: {}",
+        sample_count, mmap_count, comm_count
+    );
+    println!();
 
     let samples: Vec<&SampleEvent> = events
         .iter()

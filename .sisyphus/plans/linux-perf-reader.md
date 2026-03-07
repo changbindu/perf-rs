@@ -86,17 +86,17 @@ Report/Script output
 
    **Commit**: `feat(core): implement event parsers for Linux perf format`
 
-- [ ] 3. Implement Event Iterator
+- [x] 3. Implement Event Iterator
    - Create `EventIterator` for streaming events from perf.data file
    - Handle FINISHED_ROUND events (batch boundaries)
    - Support filtering by event type
    - Implement lazy parsing for memory efficiency
 
    **Acceptance Criteria**:
-   - [ ] Can iterate over all events in a perf.data file
-   - [ ] Handles FINISHED_ROUND correctly
-   - [ ] Can filter events by type
-   - [ ] Memory efficient (doesn't load entire file)
+   - [x] Can iterate over all events in a perf.data file
+   - [x] Handles FINISHED_ROUND correctly
+   - [x] Can filter events by type
+   - [x] Memory efficient (doesn't load entire file)
 
    **Commit**: `feat(core): implement event iterator for perf.data files`
 

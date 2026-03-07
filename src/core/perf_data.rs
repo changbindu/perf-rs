@@ -1403,7 +1403,8 @@ mod tests {
     fn test_writer_with_events() {
         let mut buffer = Cursor::new(Vec::new());
 
-        let attr = PerfEventAttr::new(0, 0, 0);
+        let sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD;
+        let attr = PerfEventAttr::new(0, 0, sample_type);
         let ids = vec![vec![1u64]];
 
         let mut writer = PerfDataWriter::new(&mut buffer);
@@ -1883,7 +1884,13 @@ impl<R: Read + Seek> PerfDataReader<R> {
     /// Returns an iterator that lazily reads events from the perf.data file.
     /// Events are read one at a time, providing memory-efficient streaming.
     pub fn event_iter(&mut self) -> io::Result<EventIterator<R>> {
-        EventIterator::new(&mut self.reader, self.data_offset, self.data_size)
+        let sample_type = self.attrs.first().map(|a| a.sample_type).unwrap_or(0);
+        EventIterator::new(
+            &mut self.reader,
+            self.data_offset,
+            self.data_size,
+            sample_type,
+        )
     }
 
     /// Create a filtered iterator over events of a specific type
@@ -1892,11 +1899,13 @@ impl<R: Read + Seek> PerfDataReader<R> {
     ///
     /// * `event_type` - The PERF_RECORD_* constant to filter by (e.g., PERF_RECORD_SAMPLE)
     pub fn event_filter(&mut self, event_type: u16) -> io::Result<EventIterator<R>> {
+        let sample_type = self.attrs.first().map(|a| a.sample_type).unwrap_or(0);
         EventIterator::with_filter(
             &mut self.reader,
             self.data_offset,
             self.data_size,
             event_type,
+            sample_type,
         )
     }
 
@@ -1905,8 +1914,27 @@ impl<R: Read + Seek> PerfDataReader<R> {
     /// This method reads all events from the perf.data file and returns them as a Vec<Event>.
     /// Note: This loads all events into memory, so use with caution for large files.
     pub fn read_all_events(&mut self) -> io::Result<Vec<Event>> {
-        let iter = self.event_iter()?;
-        iter.collect()
+        let mut events = Vec::new();
+        let mut iter = self.event_iter()?;
+
+        while let Some(event) = iter.next() {
+            events.push(event?);
+        }
+
+        self.header.sample_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::Sample(_)))
+            .count() as u64;
+        self.header.mmap_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::Mmap(_)))
+            .count() as u64;
+        self.header.comm_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::Comm(_)))
+            .count() as u64;
+
+        Ok(events)
     }
 }
 
@@ -1920,6 +1948,7 @@ pub struct EventIterator<'a, R: Read + Seek> {
     data_size: u64,
     current_offset: u64,
     filter: Option<u16>,
+    sample_type: u64,
 }
 
 impl<'a, R: Read + Seek> EventIterator<'a, R> {
@@ -1930,13 +1959,20 @@ impl<'a, R: Read + Seek> EventIterator<'a, R> {
     /// * `reader` - Mutable reference to the reader
     /// * `data_offset` - Starting offset of the data section
     /// * `data_size` - Size of the data section
-    fn new(reader: &'a mut R, data_offset: u64, data_size: u64) -> io::Result<Self> {
+    /// * `sample_type` - Sample type bitmask from PerfEventAttr for parsing SAMPLE events
+    fn new(
+        reader: &'a mut R,
+        data_offset: u64,
+        data_size: u64,
+        sample_type: u64,
+    ) -> io::Result<Self> {
         let mut iter = Self {
             reader,
             data_offset,
             data_size,
             current_offset: data_offset,
             filter: None,
+            sample_type,
         };
         iter.seek_to_start()?;
         Ok(iter)
@@ -1950,11 +1986,13 @@ impl<'a, R: Read + Seek> EventIterator<'a, R> {
     /// * `data_offset` - Starting offset of the data section
     /// * `data_size` - Size of the data section
     /// * `event_type` - Event type to filter by (PERF_RECORD_* constant)
+    /// * `sample_type` - Sample type bitmask from PerfEventAttr for parsing SAMPLE events
     fn with_filter(
         reader: &'a mut R,
         data_offset: u64,
         data_size: u64,
         event_type: u16,
+        sample_type: u64,
     ) -> io::Result<Self> {
         let mut iter = Self {
             reader,
@@ -1962,6 +2000,7 @@ impl<'a, R: Read + Seek> EventIterator<'a, R> {
             data_size,
             current_offset: data_offset,
             filter: Some(event_type),
+            sample_type,
         };
         iter.seek_to_start()?;
         Ok(iter)
@@ -2020,10 +2059,7 @@ impl<'a, R: Read + Seek> Iterator for EventIterator<'a, R> {
             PERF_RECORD_MMAP => MmapEvent::read_from(self.reader).map(|e| Event::Mmap(e)),
             PERF_RECORD_COMM => CommEvent::read_from(self.reader).map(|e| Event::Comm(e)),
             PERF_RECORD_SAMPLE => {
-                // TODO: Get proper sample_type from attributes
-                let sample_type =
-                    PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD;
-                SampleEvent::read_from(self.reader, sample_type).map(|e| Event::Sample(e))
+                SampleEvent::read_from(self.reader, self.sample_type).map(|e| Event::Sample(e))
             }
             PERF_RECORD_FINISHED_ROUND => {
                 FinishedRoundEvent::read_from(self.reader).map(|e| Event::FinishedRound(e))
