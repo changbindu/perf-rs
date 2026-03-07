@@ -103,19 +103,19 @@ Implement Linux perf compatible perf.data file writer that generates files reada
 
   **Commit**: `feat(commands): integrate Linux perf writer with record command`
 
-- [ ] 5. Create Validation Tests
-  - Test: empty recording
-  - Test: simple command (ls)
-  - Test: multi-threaded application
-  - Validate with `perf report` and `perf script`
-  - Test large files and edge cases
+- [x] 5. Create Validation Tests
+   - Test: empty recording
+   - Test: simple command (ls)
+   - Test: multi-threaded application
+   - Validate with `perf report` and `perf script`
+   - Test large files and edge cases
 
-  **Acceptance Criteria**:
-  - [ ] Test suite in `tests/perf_compatibility.rs`
-  - [ ] All tests pass: `cargo test --test perf_compatibility`
-  - [ ] Real perf tools can read all test files
+   **Acceptance Criteria**:
+   - [x] Test suite in `tests/perf_compatibility.rs`
+   - [x] All tests pass: `cargo test --test perf_compatibility`
+   - [x] Real perf tools can read all test files
 
-  **Commit**: `test: add perf.data compatibility validation tests`
+   **Commit**: `test: add perf.data compatibility validation tests`
 
 ---
 
