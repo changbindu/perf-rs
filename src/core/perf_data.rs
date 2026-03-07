@@ -13,8 +13,10 @@ use crate::error::PerfError;
 
 // Constants
 
-/// Magic number for perf.data files (little-endian "PERFILE2")
-pub const PERF_FILE_MAGIC: u64 = 0x50455246494c4532;
+/// Magic number for perf.data files (ASCII "PERFILE2" as little-endian u64)
+pub const PERF_FILE_MAGIC: u64 = 0x32454C4946524550;
+
+pub const PERF_FILE_MAGIC_BYTES: &[u8; 8] = b"PERFILE2";
 
 /// Size of the perf_file_header structure (104 bytes)
 pub const PERF_FILE_HEADER_SIZE: u64 = 104;
@@ -151,6 +153,17 @@ impl PerfFileHeader {
         let mut magic_bytes = [0u8; 8];
         reader.read_exact(&mut magic_bytes)?;
 
+        if &magic_bytes != b"PERFILE2" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Invalid magic number: expected 'PERFILE2', got '{:?}'",
+                    magic_bytes
+                ),
+            ));
+        }
+
+        let magic = u64::from_le_bytes(magic_bytes);
         let size = reader.read_u64::<LittleEndian>()?;
         let attr_size = reader.read_u64::<LittleEndian>()?;
 
@@ -176,7 +189,7 @@ impl PerfFileHeader {
         }
 
         Ok(Self {
-            magic: u64::from_be_bytes(magic_bytes),
+            magic,
             size,
             attr_size,
             attrs,
@@ -191,12 +204,6 @@ impl PerfFileHeader {
     }
 
     pub fn validate(&self) -> Result<(), PerfError> {
-        if self.magic != PERF_FILE_MAGIC {
-            return Err(PerfError::InvalidMagic {
-                expected: "PERFILE2".to_string(),
-                actual: format!("{:016x}", self.magic),
-            });
-        }
         if self.size != PERF_FILE_HEADER_SIZE {
             return Err(PerfError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -262,8 +269,6 @@ pub struct PerfEventAttr {
     pub sig_data: u64,
     /// Config 3
     pub config3: u64,
-    /// Config 4
-    pub config4: u64,
 }
 
 impl Default for PerfEventAttr {
@@ -292,7 +297,6 @@ impl Default for PerfEventAttr {
             aux_action: 0,
             sig_data: 0,
             config3: 0,
-            config4: 0,
         }
     }
 }
@@ -366,9 +370,38 @@ impl PerfEventAttr {
         writer.write_u32::<LittleEndian>(self.aux_action)?;
         writer.write_u64::<LittleEndian>(self.sig_data)?;
         writer.write_u64::<LittleEndian>(self.config3)?;
-        writer.write_u64::<LittleEndian>(self.config4)?;
 
         Ok(())
+    }
+
+    pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        use byteorder::{LittleEndian, ReadBytesExt};
+
+        Ok(Self {
+            type_: reader.read_u32::<LittleEndian>()?,
+            size: reader.read_u32::<LittleEndian>()?,
+            config: reader.read_u64::<LittleEndian>()?,
+            sample_period_or_freq: reader.read_u64::<LittleEndian>()?,
+            sample_type: reader.read_u64::<LittleEndian>()?,
+            read_format: reader.read_u64::<LittleEndian>()?,
+            bitfields: reader.read_u64::<LittleEndian>()?,
+            wakeup_events_or_watermark: reader.read_u32::<LittleEndian>()?,
+            bp_type: reader.read_u32::<LittleEndian>()?,
+            config1: reader.read_u64::<LittleEndian>()?,
+            config2: reader.read_u64::<LittleEndian>()?,
+            branch_sample_type: reader.read_u64::<LittleEndian>()?,
+            sample_regs_user: reader.read_u64::<LittleEndian>()?,
+            sample_stack_user: reader.read_u32::<LittleEndian>()?,
+            clockid: reader.read_i32::<LittleEndian>()?,
+            sample_regs_intr: reader.read_u64::<LittleEndian>()?,
+            aux_watermark: reader.read_u32::<LittleEndian>()?,
+            sample_max_stack: reader.read_u16::<LittleEndian>()?,
+            _reserved_2: reader.read_u16::<LittleEndian>()?,
+            aux_sample_size: reader.read_u32::<LittleEndian>()?,
+            aux_action: reader.read_u32::<LittleEndian>()?,
+            sig_data: reader.read_u64::<LittleEndian>()?,
+            config3: reader.read_u64::<LittleEndian>()?,
+        })
     }
 }
 
@@ -1267,6 +1300,191 @@ mod tests {
     }
 }
 
+// Reader Implementation
+
+/// Reader for Linux perf.data files
+///
+/// This reader parses files compatible with the Linux perf tool.
+pub struct PerfDataReader<R: Read + Seek> {
+    reader: R,
+    header: PerfFileHeader,
+    attrs: Vec<PerfEventAttr>,
+    event_ids: Vec<Vec<u64>>,
+    data_offset: u64,
+    data_size: u64,
+}
+
+impl<R: Read + Seek> PerfDataReader<R> {
+    /// Create a new reader from a generic reader that supports Read and Seek
+    pub fn from_reader(mut reader: R) -> io::Result<Self> {
+        let mut data_reader = Self {
+            reader,
+            header: PerfFileHeader::default(),
+            attrs: Vec::new(),
+            event_ids: Vec::new(),
+            data_offset: 0,
+            data_size: 0,
+        };
+
+        data_reader.parse_header()?;
+        data_reader.parse_attributes()?;
+
+        Ok(data_reader)
+    }
+
+    /// Parse the file header from the beginning of the file
+    fn parse_header(&mut self) -> io::Result<()> {
+        use byteorder::{LittleEndian, ReadBytesExt};
+
+        self.reader.seek(SeekFrom::Start(0))?;
+
+        let mut magic_bytes = [0u8; 8];
+        self.reader.read_exact(&mut magic_bytes)?;
+
+        if &magic_bytes != b"PERFILE2" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Invalid magic number: expected 'PERFILE2', got '{:?}'",
+                    magic_bytes
+                ),
+            ));
+        }
+
+        let magic = u64::from_le_bytes(magic_bytes);
+        let size = self.reader.read_u64::<LittleEndian>()?;
+        let attr_size = self.reader.read_u64::<LittleEndian>()?;
+
+        let attrs = PerfFileSection {
+            offset: self.reader.read_u64::<LittleEndian>()?,
+            size: self.reader.read_u64::<LittleEndian>()?,
+        };
+
+        let data = PerfFileSection {
+            offset: self.reader.read_u64::<LittleEndian>()?,
+            size: self.reader.read_u64::<LittleEndian>()?,
+        };
+
+        let event_types = PerfFileSection {
+            offset: self.reader.read_u64::<LittleEndian>()?,
+            size: self.reader.read_u64::<LittleEndian>()?,
+        };
+
+        let flags = self.reader.read_u64::<LittleEndian>()?;
+        let mut flags1 = [0u64; 3];
+        for flag in flags1.iter_mut() {
+            *flag = self.reader.read_u64::<LittleEndian>()?;
+        }
+
+        self.header = PerfFileHeader {
+            magic,
+            size,
+            attr_size,
+            attrs,
+            data,
+            event_types,
+            flags,
+            flags1,
+            sample_count: 0,
+            mmap_count: 0,
+            comm_count: 0,
+        };
+
+        self.header.validate().map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("Invalid header: {}", e))
+        })?;
+
+        self.data_offset = self.header.data.offset;
+        self.data_size = self.header.data.size;
+
+        Ok(())
+    }
+
+    /// Parse the attribute section and event IDs
+    fn parse_attributes(&mut self) -> io::Result<()> {
+        use byteorder::{LittleEndian, ReadBytesExt};
+
+        let attrs_offset = self.header.attrs.offset;
+        let attrs_size = self.header.attrs.size;
+
+        if attrs_size == 0 {
+            return Ok(());
+        }
+
+        self.reader.seek(SeekFrom::Start(attrs_offset))?;
+
+        let attrs_end = attrs_offset + attrs_size;
+        while self.reader.stream_position()? < attrs_end {
+            let attr = PerfEventAttr::read_from(&mut self.reader)?;
+            self.attrs.push(attr);
+
+            let ids_offset = self.reader.read_u64::<LittleEndian>()?;
+            let ids_size = self.reader.read_u64::<LittleEndian>()?;
+
+            let mut ids = Vec::new();
+            if ids_size > 0 {
+                let current_pos = self.reader.stream_position()?;
+                self.reader.seek(SeekFrom::Start(ids_offset))?;
+
+                let num_ids = ids_size / 8;
+                for _ in 0..num_ids {
+                    ids.push(self.reader.read_u64::<LittleEndian>()?);
+                }
+
+                self.reader.seek(SeekFrom::Start(current_pos))?;
+            }
+
+            self.event_ids.push(ids);
+        }
+
+        Ok(())
+    }
+
+    /// Get a reference to the file header
+    pub fn header(&self) -> &PerfFileHeader {
+        &self.header
+    }
+
+    /// Get a reference to the parsed attributes
+    pub fn attrs(&self) -> &[PerfEventAttr] {
+        &self.attrs
+    }
+
+    /// Get a reference to the event IDs
+    pub fn event_ids(&self) -> &[Vec<u64>] {
+        &self.event_ids
+    }
+
+    /// Get the data section offset
+    pub fn data_offset(&self) -> u64 {
+        self.data_offset
+    }
+
+    /// Get the data section size
+    pub fn data_size(&self) -> u64 {
+        self.data_size
+    }
+
+    /// Seek to the beginning of the data section
+    pub fn seek_to_data(&mut self) -> io::Result<()> {
+        self.reader.seek(SeekFrom::Start(self.data_offset))?;
+        Ok(())
+    }
+
+    /// Get a mutable reference to the underlying reader
+    pub fn reader_mut(&mut self) -> &mut R {
+        &mut self.reader
+    }
+}
+
+impl PerfDataReader<File> {
+    /// Create a reader from a file path
+    pub fn from_path<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let file = File::open(path)?;
+        Self::from_reader(file)
+    }
+}
+
 // Temporary stub types for backward compatibility during transition
 // TODO: Remove these in Task 4 when proper integration is done
 
@@ -1278,57 +1496,12 @@ pub enum Event {
     Comm(CommEvent),
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct PerfDataReader<R> {
-    _phantom: std::marker::PhantomData<R>,
-    sample_count: u64,
-    mmap_count: u64,
-    comm_count: u64,
-}
-
-impl<R> PerfDataReader<R> {
-    #[allow(dead_code)]
-    pub fn new(_reader: R) -> Result<Self, PerfError> {
-        Err(PerfError::Io(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "PerfDataReader not yet implemented for Linux perf format",
-        )))
-    }
-
-    #[allow(dead_code)]
-    pub fn header(&self) -> PerfFileHeader {
-        PerfFileHeader {
-            sample_count: 0,
-            mmap_count: 0,
-            comm_count: 0,
-            ..Default::default()
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn read_event(&mut self) -> Result<Option<Event>, PerfError> {
-        Err(PerfError::Io(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "PerfDataReader not yet implemented for Linux perf format",
-        )))
-    }
-
+impl<R: Read + Seek> PerfDataReader<R> {
     #[allow(dead_code)]
     pub fn read_all_events(&mut self) -> Result<Vec<Event>, PerfError> {
         Err(PerfError::Io(io::Error::new(
             io::ErrorKind::Unsupported,
-            "PerfDataReader not yet implemented for Linux perf format",
-        )))
-    }
-}
-
-impl PerfDataReader<File> {
-    #[allow(dead_code)]
-    pub fn from_path<P: AsRef<Path>>(_path: P) -> Result<Self, PerfError> {
-        Err(PerfError::Io(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "PerfDataReader not yet implemented for Linux perf format",
+            "PerfDataReader::read_all_events not yet implemented - event parsing in Task 2",
         )))
     }
 }

@@ -94,13 +94,13 @@ pub fn execute(input: Option<&str>, _format: &str, show_callchain: bool) -> Resu
     for event in &events {
         match event {
             Event::Sample(sample) => {
-                display_sample(sample, &comm_map, &resolver, show_callchain);
+                display_sample(&sample, &comm_map, &resolver, show_callchain);
             }
             Event::Mmap(mmap) => {
-                display_mmap(mmap);
+                display_mmap(&mmap);
             }
             Event::Comm(comm) => {
-                display_comm(comm);
+                display_comm(&comm);
             }
         }
     }

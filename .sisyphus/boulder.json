@@ -1,10 +1,10 @@
 {
-  "active_plan": "/home/changbin/work/perf-rs/.sisyphus/plans/perf-data-compatibility.md",
-  "started_at": "2026-03-07T04:10:43.472Z",
+  "active_plan": "/home/changbin/work/perf-rs/.sisyphus/plans/linux-perf-reader.md",
+  "started_at": "2026-03-07T14:05:49.606Z",
   "session_ids": [
     "ses_3398270dfffewjh85LNoE03CMt"
   ],
-  "plan_name": "perf-data-compatibility",
+  "plan_name": "linux-perf-reader",
   "agent": "atlas",
   "worktree_path": "/home/changbin/work/perf-rs"
 }

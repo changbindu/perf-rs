@@ -5,6 +5,10 @@ edition = "2021"
 rust-version = "1.70"
 description = "Linux performance monitoring tool in Rust"
 
+[lib]
+name = "perf_rs"
+path = "src/lib.rs"
+
 [dependencies]
 perf-event2 = "0.7"
 clap = { version = "4", features = ["derive"] }
