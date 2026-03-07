@@ -197,32 +197,34 @@ impl CallGraph {
             ip_stats.comm = comm;
         }
 
-        if !sample.callchain.is_empty() {
-            for (i, &addr) in sample.callchain.iter().enumerate() {
-                let shared_obj = self.find_shared_object(addr);
-                let comm = self.get_comm(sample.pid);
+        if sample.callchain.as_ref().map_or(false, |cc| !cc.is_empty()) {
+            if let Some(ref cc) = sample.callchain {
+                for (i, &addr) in cc.iter().enumerate() {
+                    let shared_obj = self.find_shared_object(addr);
+                    let comm = self.get_comm(sample.pid);
 
-                let stats = self.functions.entry(addr).or_default();
+                    let stats = self.functions.entry(addr).or_default();
 
-                if i > 0 {
-                    stats.callchain_hits += 1;
-                    stats.total_count += 1;
-                    stats.total_period += sample.period;
-                }
+                    if i > 0 {
+                        stats.callchain_hits += 1;
+                        stats.total_count += 1;
+                        stats.total_period += sample.period;
+                    }
 
-                if stats.shared_object.is_none() {
-                    stats.shared_object = shared_obj;
-                }
-                if stats.comm.is_none() {
-                    stats.comm = comm;
-                }
+                    if stats.shared_object.is_none() {
+                        stats.shared_object = shared_obj;
+                    }
+                    if stats.comm.is_none() {
+                        stats.comm = comm;
+                    }
 
-                if i + 1 < sample.callchain.len() {
-                    let edge = CallEdge {
-                        caller: sample.callchain[i + 1],
-                        callee: addr,
-                    };
-                    *self.edges.entry(edge).or_default() += 1;
+                    if i + 1 < cc.len() {
+                        let edge = CallEdge {
+                            caller: cc[i + 1],
+                            callee: addr,
+                        };
+                        *self.edges.entry(edge).or_default() += 1;
+                    }
                 }
             }
         }
@@ -433,7 +435,7 @@ mod tests {
         let mut graph = CallGraph::new();
         let resolver = MultiResolver::new();
 
-        let sample = SampleEvent::new(100, 0x1000, 1234, 5678, 1000, vec![], None);
+        let sample = SampleEvent::new(100, 0x1000, 1234, 5678, 1000, None, None);
         graph.add_sample(&sample, &resolver);
 
         assert_eq!(graph.total_samples, 1);
@@ -453,7 +455,7 @@ mod tests {
         let resolver = MultiResolver::new();
 
         let callchain = vec![0x1000, 0x2000, 0x3000];
-        let sample = SampleEvent::new(100, 0x1000, 1234, 5678, 1000, callchain, None);
+        let sample = SampleEvent::new(100, 0x1000, 1234, 5678, 1000, Some(callchain), None);
         graph.add_sample(&sample, &resolver);
 
         assert_eq!(graph.total_samples, 1);
@@ -525,11 +527,11 @@ mod tests {
         let mut graph = CallGraph::new();
         let resolver = MultiResolver::new();
 
-        let sample1 = SampleEvent::new(100, 0x1000, 1234, 5678, 500, vec![], None);
+        let sample1 = SampleEvent::new(100, 0x1000, 1234, 5678, 500, None, None);
         graph.add_sample(&sample1, &resolver);
 
         let callchain = vec![0x1000, 0x2000];
-        let sample2 = SampleEvent::new(200, 0x1000, 1234, 5678, 500, callchain, None);
+        let sample2 = SampleEvent::new(200, 0x1000, 1234, 5678, 500, Some(callchain), None);
         graph.add_sample(&sample2, &resolver);
 
         assert_eq!(graph.total_samples, 2);

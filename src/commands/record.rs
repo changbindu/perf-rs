@@ -309,7 +309,7 @@ fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> O
                 pid,
                 tid,
                 sample_period,
-                callchain,
+                Some(callchain),
                 cpu,
             ))
         }

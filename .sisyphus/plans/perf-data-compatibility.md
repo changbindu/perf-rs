@@ -61,19 +61,19 @@ Implement Linux perf compatible perf.data file writer that generates files reada
    - [x] 3 reference files created (empty, simple command, multi-threaded)
    - [x] Environment validated
 
-- [ ] 2. Implement perf.data Writer Core
-  - Implement file header (PERFILE2 magic, 104 bytes)
-  - Implement attributes section (perf_event_attr structure)
-  - Implement FINISHED_ROUND event
-  - Use `byteorder` crate for explicit little-endian serialization
-  - Ensure 8-byte alignment for all records
+- [x] 2. Implement perf.data Writer Core
+   - Implement file header (PERFILE2 magic, 104 bytes)
+   - Implement attributes section (perf_event_attr structure)
+   - Implement FINISHED_ROUND event
+   - Use `byteorder` crate for explicit little-endian serialization
+   - Ensure 8-byte alignment for all records
 
-  **Acceptance Criteria**:
-  - [ ] `src/core/perf_data.rs` rewritten with Linux perf structures
-  - [ ] Test: `xxd -l 8 output.perf.data` shows `PERFILE2` magic
-  - [ ] Test: minimal valid file accepted by `perf report`
+   **Acceptance Criteria**:
+   - [x] `src/core/perf_data.rs` rewritten with Linux perf structures
+   - [x] Test: `xxd -l 8 output.perf.data` shows `PERFILE2` magic
+   - [x] Test: minimal valid file accepted by `perf report`
 
-  **Commit**: `feat(core): implement Linux perf file header and attributes`
+   **Commit**: `feat(core): implement Linux perf file header and attributes`
 
 - [ ] 3. Implement Event Writers
   - Implement SAMPLE event (IP, TID, TIME, PERIOD fields)

@@ -438,6 +438,256 @@ impl FinishedRoundEvent {
     }
 }
 
+// Sample type flags for PERF_RECORD_SAMPLE
+pub const PERF_SAMPLE_IP: u64 = 1 << 0;
+pub const PERF_SAMPLE_TID: u64 = 1 << 1;
+pub const PERF_SAMPLE_TIME: u64 = 1 << 2;
+pub const PERF_SAMPLE_ADDR: u64 = 1 << 3;
+pub const PERF_SAMPLE_READ: u64 = 1 << 4;
+pub const PERF_SAMPLE_CALLCHAIN: u64 = 1 << 5;
+pub const PERF_SAMPLE_ID: u64 = 1 << 6;
+pub const PERF_SAMPLE_CPU: u64 = 1 << 7;
+pub const PERF_SAMPLE_PERIOD: u64 = 1 << 8;
+pub const PERF_SAMPLE_STREAM_ID: u64 = 1 << 9;
+pub const PERF_SAMPLE_RAW: u64 = 1 << 10;
+
+/// PERF_RECORD_MMAP event (type 1)
+///
+/// Records a memory mapping event.
+#[derive(Debug, Clone)]
+pub struct MmapEvent {
+    pub header: PerfEventHeader,
+    pub pid: u32,
+    pub tid: u32,
+    pub addr: u64,
+    pub len: u64,
+    pub pgoff: u64,
+    pub filename: String,
+}
+
+impl MmapEvent {
+    pub fn new(pid: u32, tid: u32, addr: u64, len: u64, pgoff: u64, filename: String) -> Self {
+        // Calculate size: header (6) + pid (4) + tid (4) + addr (8) + len (8) + pgoff (8) + filename (with null and padding)
+        let filename_bytes_len = filename.len() + 1; // +1 for null terminator
+        let padded_len = ((filename_bytes_len + 7) / 8) * 8; // Pad to 8 bytes
+        let total_size = 6 + 4 + 4 + 8 + 8 + 8 + padded_len;
+
+        Self {
+            header: PerfEventHeader::new(PERF_RECORD_MMAP, total_size as u16),
+            pid,
+            tid,
+            addr,
+            len,
+            pgoff,
+            filename,
+        }
+    }
+
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        use byteorder::{LittleEndian, WriteBytesExt};
+
+        self.header.write_to(writer)?;
+        writer.write_u32::<LittleEndian>(self.pid)?;
+        writer.write_u32::<LittleEndian>(self.tid)?;
+        writer.write_u64::<LittleEndian>(self.addr)?;
+        writer.write_u64::<LittleEndian>(self.len)?;
+        writer.write_u64::<LittleEndian>(self.pgoff)?;
+
+        // Write null-terminated filename with padding to 8 bytes
+        write_null_terminated_padded_string(writer, &self.filename, 8)?;
+
+        Ok(())
+    }
+}
+
+/// PERF_RECORD_COMM event (type 3)
+///
+/// Records a command name (exec) event.
+#[derive(Debug, Clone)]
+pub struct CommEvent {
+    pub header: PerfEventHeader,
+    pub pid: u32,
+    pub tid: u32,
+    pub comm: String,
+}
+
+impl CommEvent {
+    pub fn new(pid: u32, tid: u32, comm: String) -> Self {
+        // Calculate size: header (6) + pid (4) + tid (4) + comm (with null and padding)
+        let comm_bytes_len = comm.len() + 1; // +1 for null terminator
+        let padded_len = ((comm_bytes_len + 7) / 8) * 8; // Pad to 8 bytes
+        let total_size = 6 + 4 + 4 + padded_len;
+
+        Self {
+            header: PerfEventHeader::new(PERF_RECORD_COMM, total_size as u16),
+            pid,
+            tid,
+            comm,
+        }
+    }
+
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        use byteorder::{LittleEndian, WriteBytesExt};
+
+        self.header.write_to(writer)?;
+        writer.write_u32::<LittleEndian>(self.pid)?;
+        writer.write_u32::<LittleEndian>(self.tid)?;
+
+        // Write null-terminated comm with padding to 8 bytes
+        write_null_terminated_padded_string(writer, &self.comm, 8)?;
+
+        Ok(())
+    }
+}
+
+/// PERF_RECORD_SAMPLE event (type 9)
+///
+/// Records a sample event with variable fields based on sample_type.
+#[derive(Debug, Clone)]
+pub struct SampleEvent {
+    pub header: PerfEventHeader,
+    pub sample_type: u64,
+    pub ip: u64,
+    pub pid: u32,
+    pub tid: u32,
+    pub time: u64,
+    pub period: u64,
+    pub callchain: Option<Vec<u64>>,
+    pub cpu: Option<u32>,
+}
+
+impl SampleEvent {
+    pub fn new(
+        time: u64,
+        ip: u64,
+        pid: u32,
+        tid: u32,
+        period: u64,
+        callchain: Option<Vec<u64>>,
+        cpu: Option<u32>,
+    ) -> Self {
+        let sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD;
+        let has_callchain = callchain.as_ref().map_or(false, |cc| !cc.is_empty());
+
+        // Calculate size based on sample_type fields
+        let mut size = 6u16; // Header size
+
+        if sample_type & PERF_SAMPLE_IP != 0 {
+            size += 8;
+        }
+        if sample_type & PERF_SAMPLE_TID != 0 {
+            size += 8;
+        }
+        if sample_type & PERF_SAMPLE_TIME != 0 {
+            size += 8;
+        }
+        if sample_type & PERF_SAMPLE_PERIOD != 0 {
+            size += 8;
+        }
+        if let Some(ref cc) = callchain {
+            // nr (8) + nr * 8 for each IP
+            size += 8 + (cc.len() as u16 * 8);
+        }
+
+        Self {
+            header: PerfEventHeader::new(PERF_RECORD_SAMPLE, size),
+            sample_type,
+            ip,
+            pid,
+            tid,
+            time,
+            period,
+            callchain,
+            cpu,
+        }
+    }
+
+    fn calculate_size(&self) -> u16 {
+        let mut size = 6u16; // Header size
+
+        if self.sample_type & PERF_SAMPLE_IP != 0 {
+            size += 8;
+        }
+        if self.sample_type & PERF_SAMPLE_TID != 0 {
+            size += 8;
+        }
+        if self.sample_type & PERF_SAMPLE_TIME != 0 {
+            size += 8;
+        }
+        if self.sample_type & PERF_SAMPLE_PERIOD != 0 {
+            size += 8;
+        }
+        if let Some(ref cc) = self.callchain {
+            if !cc.is_empty() {
+                // nr (u64) + nr * u64 for each IP
+                size += 8 + (cc.len() as u16 * 8);
+            }
+        }
+
+        size
+    }
+
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        use byteorder::{LittleEndian, WriteBytesExt};
+
+        // Recalculate size with actual callchain length
+        let size = self.calculate_size();
+        let header = PerfEventHeader::new(PERF_RECORD_SAMPLE, size);
+
+        header.write_to(writer)?;
+
+        // Write fields in the order they appear in the format
+        if self.sample_type & PERF_SAMPLE_IP != 0 {
+            writer.write_u64::<LittleEndian>(self.ip)?;
+        }
+
+        if self.sample_type & PERF_SAMPLE_TID != 0 {
+            writer.write_u32::<LittleEndian>(self.pid)?;
+            writer.write_u32::<LittleEndian>(self.tid)?;
+        }
+
+        if self.sample_type & PERF_SAMPLE_TIME != 0 {
+            writer.write_u64::<LittleEndian>(self.time)?;
+        }
+
+        if self.sample_type & PERF_SAMPLE_PERIOD != 0 {
+            writer.write_u64::<LittleEndian>(self.period)?;
+        }
+
+        if let Some(ref cc) = self.callchain {
+            if !cc.is_empty() {
+                writer.write_u64::<LittleEndian>(cc.len() as u64)?;
+                for ip in cc {
+                    writer.write_u64::<LittleEndian>(*ip)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Helper function to write a null-terminated string with padding to specified alignment
+fn write_null_terminated_padded_string<W: Write>(
+    writer: &mut W,
+    s: &str,
+    alignment: usize,
+) -> io::Result<()> {
+    let bytes = s.as_bytes();
+    writer.write_all(bytes)?;
+    writer.write_all(&[0u8])?; // Null terminator
+
+    // Calculate padding needed
+    let total_len = bytes.len() + 1;
+    let padding = (alignment - (total_len % alignment)) % alignment;
+
+    if padding > 0 {
+        writer_write_padding(writer, padding)?;
+    }
+
+    Ok(())
+}
+
 // Writer Implementation
 
 /// Writer for Linux perf.data files
@@ -530,6 +780,27 @@ impl<W: Write + Seek> PerfDataWriter<W> {
         Ok(())
     }
 
+    /// Write an MMAP event
+    pub fn write_mmap(&mut self, mmap: &MmapEvent) -> io::Result<()> {
+        mmap.write_to(&mut self.writer)?;
+        self.data_size += mmap.header.size as u64;
+        Ok(())
+    }
+
+    /// Write a COMM event
+    pub fn write_comm(&mut self, comm: &CommEvent) -> io::Result<()> {
+        comm.write_to(&mut self.writer)?;
+        self.data_size += comm.header.size as u64;
+        Ok(())
+    }
+
+    /// Write a SAMPLE event
+    pub fn write_sample(&mut self, sample: &SampleEvent) -> io::Result<()> {
+        sample.write_to(&mut self.writer)?;
+        self.data_size += sample.calculate_size() as u64;
+        Ok(())
+    }
+
     /// Write raw event data
     pub fn write_event_data(&mut self, data: &[u8]) -> io::Result<()> {
         self.writer.write_all(data)?;
@@ -573,6 +844,18 @@ impl PerfDataWriter<File> {
     pub fn from_path<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let file = File::create(path)?;
         Ok(Self::new(file))
+    }
+
+    /// Finalize the file and update header (backward compatibility method)
+    pub fn finalize_with_header_update(mut self) -> io::Result<()> {
+        self.header.data.size = self.data_size;
+
+        let header_start = 0;
+        self.writer.seek(SeekFrom::Start(header_start))?;
+        self.header.write_to(&mut self.writer)?;
+        self.writer.flush()?;
+
+        Ok(())
     }
 }
 
@@ -673,6 +956,296 @@ mod tests {
             let _ = std::fs::write(".sisyphus/evidence/test-output.perf.data", &data);
         }
     }
+
+    #[test]
+    fn test_mmap_event() {
+        let mmap = MmapEvent::new(
+            1234,
+            5678,
+            0x7f0000000000,
+            0x1000,
+            0,
+            "/usr/bin/ls".to_string(),
+        );
+
+        assert_eq!(mmap.header.type_, PERF_RECORD_MMAP);
+        assert_eq!(mmap.pid, 1234);
+        assert_eq!(mmap.tid, 5678);
+        assert_eq!(mmap.addr, 0x7f0000000000);
+        assert_eq!(mmap.len, 0x1000);
+
+        let mut buffer = Vec::new();
+        mmap.write_to(&mut buffer).unwrap();
+
+        // Verify header
+        assert_eq!(buffer[0], 1); // MMAP type
+        assert_eq!(buffer[1], 0); // type MSB
+        assert_eq!(
+            u16::from_le_bytes([buffer[4], buffer[5]]),
+            buffer.len() as u16
+        ); // size
+
+        // Verify pid/tid
+        let pid = u32::from_le_bytes([buffer[6], buffer[7], buffer[8], buffer[9]]);
+        let tid = u32::from_le_bytes([buffer[10], buffer[11], buffer[12], buffer[13]]);
+        assert_eq!(pid, 1234);
+        assert_eq!(tid, 5678);
+
+        // Verify filename with null terminator
+        let filename_start = 6 + 4 + 4 + 8 + 8 + 8; // After header + pid + tid + addr + len + pgoff
+        let filename_bytes = &buffer[filename_start..];
+        assert_eq!(&filename_bytes[0..12], b"/usr/bin/ls\0");
+    }
+
+    #[test]
+    fn test_mmap_event_alignment() {
+        // Test that filename is properly padded to 8-byte alignment
+        let short_filename = "ls";
+        let mmap = MmapEvent::new(1234, 5678, 0, 0x1000, 0, short_filename.to_string());
+
+        let mut buffer = Vec::new();
+        mmap.write_to(&mut buffer).unwrap();
+
+        // The filename field should be padded to 8 bytes
+        // Filename starts at offset: header(6) + pid(4) + tid(4) + addr(8) + len(8) + pgoff(8) = 38
+        let filename_start = 38;
+        // "ls" (2 bytes) + null (1 byte) + padding (5 bytes) = 8 bytes total
+        assert_eq!(&buffer[filename_start..filename_start + 2], b"ls");
+        assert_eq!(buffer[filename_start + 2], 0); // null terminator
+                                                   // The next 5 bytes should be padding (zeros)
+        assert_eq!(&buffer[filename_start + 3..filename_start + 8], &[0u8; 5]);
+
+        // Total buffer size
+        assert_eq!(buffer.len(), 46);
+        assert_eq!(mmap.header.size as usize, buffer.len());
+    }
+
+    #[test]
+    fn test_comm_event() {
+        let comm = CommEvent::new(1234, 5678, "test-program".to_string());
+
+        assert_eq!(comm.header.type_, PERF_RECORD_COMM);
+        assert_eq!(comm.pid, 1234);
+        assert_eq!(comm.tid, 5678);
+        assert_eq!(comm.comm, "test-program");
+
+        let mut buffer = Vec::new();
+        comm.write_to(&mut buffer).unwrap();
+
+        // Verify header
+        assert_eq!(buffer[0], 3); // COMM type
+        assert_eq!(buffer[1], 0); // type MSB
+
+        // Verify pid/tid
+        let pid = u32::from_le_bytes([buffer[6], buffer[7], buffer[8], buffer[9]]);
+        let tid = u32::from_le_bytes([buffer[10], buffer[11], buffer[12], buffer[13]]);
+        assert_eq!(pid, 1234);
+        assert_eq!(tid, 5678);
+
+        // Verify comm string with null terminator
+        let comm_start = 6 + 4 + 4; // After header + pid + tid
+        let comm_bytes = &buffer[comm_start..];
+        assert_eq!(&comm_bytes[0..13], b"test-program\0");
+    }
+
+    #[test]
+    fn test_comm_event_alignment() {
+        // Test that comm is properly padded to 8-byte alignment
+        let short_comm = "sh";
+        let comm = CommEvent::new(1234, 5678, short_comm.to_string());
+
+        let mut buffer = Vec::new();
+        comm.write_to(&mut buffer).unwrap();
+
+        // The comm field should be padded to 8 bytes
+        // Comm starts at offset: header(6) + pid(4) + tid(4) = 14
+        let comm_start = 14;
+        // "sh" (2 bytes) + null (1 byte) + padding (5 bytes) = 8 bytes total
+        assert_eq!(&buffer[comm_start..comm_start + 2], b"sh");
+        assert_eq!(buffer[comm_start + 2], 0); // null terminator
+                                               // The next 5 bytes should be padding (zeros)
+        assert_eq!(&buffer[comm_start + 3..comm_start + 8], &[0u8; 5]);
+
+        // Total buffer size: 6 + 4 + 4 + 8 = 22 bytes
+        assert_eq!(buffer.len(), 22);
+        assert_eq!(comm.header.size as usize, buffer.len());
+    }
+
+    #[test]
+    fn test_sample_event_basic() {
+        let sample = SampleEvent::new(0, 0x7f0000001000, 1234, 5678, 1000, None, None);
+
+        assert_eq!(sample.header.type_, PERF_RECORD_SAMPLE);
+        assert_eq!(sample.ip, 0x7f0000001000);
+        assert_eq!(sample.pid, 1234);
+        assert_eq!(sample.tid, 5678);
+        assert_eq!(sample.period, 1000);
+
+        let mut buffer = Vec::new();
+        sample.write_to(&mut buffer).unwrap();
+
+        // Verify header
+        assert_eq!(buffer[0], 9); // SAMPLE type
+        assert_eq!(buffer[1], 0); // type MSB
+
+        // Verify IP field
+        let ip = u64::from_le_bytes([
+            buffer[6], buffer[7], buffer[8], buffer[9], buffer[10], buffer[11], buffer[12],
+            buffer[13],
+        ]);
+        assert_eq!(ip, 0x7f0000001000);
+
+        // Verify pid/tid fields
+        let pid = u32::from_le_bytes([buffer[14], buffer[15], buffer[16], buffer[17]]);
+        let tid = u32::from_le_bytes([buffer[18], buffer[19], buffer[20], buffer[21]]);
+        assert_eq!(pid, 1234);
+        assert_eq!(tid, 5678);
+
+        // Verify time field (always present with new signature)
+        let time = u64::from_le_bytes([
+            buffer[22], buffer[23], buffer[24], buffer[25], buffer[26], buffer[27], buffer[28],
+            buffer[29],
+        ]);
+        assert_eq!(time, 0);
+
+        // Verify period field (after time)
+        let period = u64::from_le_bytes([
+            buffer[30], buffer[31], buffer[32], buffer[33], buffer[34], buffer[35], buffer[36],
+            buffer[37],
+        ]);
+        assert_eq!(period, 1000);
+    }
+
+    #[test]
+    fn test_sample_event_with_time() {
+        let sample = SampleEvent::new(
+            1234567890123456,
+            0x7f0000001000,
+            1234,
+            5678,
+            1000,
+            None,
+            None,
+        );
+
+        let mut buffer = Vec::new();
+        sample.write_to(&mut buffer).unwrap();
+
+        // Verify time field (after IP, TID)
+        let time = u64::from_le_bytes([
+            buffer[22], buffer[23], buffer[24], buffer[25], buffer[26], buffer[27], buffer[28],
+            buffer[29],
+        ]);
+        assert_eq!(time, 1234567890123456);
+    }
+
+    #[test]
+    fn test_sample_event_with_callchain() {
+        let callchain = vec![0x7f0000001000, 0x7f0000002000, 0x7f0000003000];
+        let sample = SampleEvent::new(0, 0x7f0000001000, 0, 0, 0, Some(callchain.clone()), None);
+
+        let mut buffer = Vec::new();
+        sample.write_to(&mut buffer).unwrap();
+
+        // Verify IP field
+        let ip = u64::from_le_bytes([
+            buffer[6], buffer[7], buffer[8], buffer[9], buffer[10], buffer[11], buffer[12],
+            buffer[13],
+        ]);
+        assert_eq!(ip, 0x7f0000001000);
+
+        // Verify pid/tid fields (after IP)
+        let pid = u32::from_le_bytes([buffer[14], buffer[15], buffer[16], buffer[17]]);
+        let tid = u32::from_le_bytes([buffer[18], buffer[19], buffer[20], buffer[21]]);
+        assert_eq!(pid, 0);
+        assert_eq!(tid, 0);
+
+        // Verify time field (after TID)
+        let time = u64::from_le_bytes([
+            buffer[22], buffer[23], buffer[24], buffer[25], buffer[26], buffer[27], buffer[28],
+            buffer[29],
+        ]);
+        assert_eq!(time, 0);
+
+        // Verify period field (after time)
+        let period = u64::from_le_bytes([
+            buffer[30], buffer[31], buffer[32], buffer[33], buffer[34], buffer[35], buffer[36],
+            buffer[37],
+        ]);
+        assert_eq!(period, 0);
+
+        // Verify callchain count (after period)
+        let nr = u64::from_le_bytes([
+            buffer[38], buffer[39], buffer[40], buffer[41], buffer[42], buffer[43], buffer[44],
+            buffer[45],
+        ]);
+        assert_eq!(nr, 3);
+
+        // Verify callchain entries
+        for i in 0..3 {
+            let offset = 46 + (i * 8);
+            let addr = u64::from_le_bytes([
+                buffer[offset],
+                buffer[offset + 1],
+                buffer[offset + 2],
+                buffer[offset + 3],
+                buffer[offset + 4],
+                buffer[offset + 5],
+                buffer[offset + 6],
+                buffer[offset + 7],
+            ]);
+            assert_eq!(addr, callchain[i]);
+        }
+    }
+
+    #[test]
+    fn test_sample_event_size_calculation() {
+        let sample = SampleEvent::new(0, 0, 0, 0, 1000, None, None);
+
+        let size = sample.calculate_size();
+        // Header (6) + IP (8) + TID (8) + TIME (8) + PERIOD (8) = 38
+        assert_eq!(size, 38);
+
+        let mut buffer = Vec::new();
+        sample.write_to(&mut buffer).unwrap();
+        assert_eq!(buffer.len() as u16, size);
+    }
+
+    #[test]
+    fn test_writer_with_events() {
+        let mut buffer = Cursor::new(Vec::new());
+
+        let attr = PerfEventAttr::new(0, 0, 0);
+        let ids = vec![vec![1u64]];
+
+        let mut writer = PerfDataWriter::new(&mut buffer);
+        writer.initialize(&[attr], &ids).unwrap();
+
+        // Write COMM event
+        let comm = CommEvent::new(1234, 1234, "test-program".to_string());
+        writer.write_comm(&comm).unwrap();
+
+        // Write MMAP event
+        let mmap = MmapEvent::new(1234, 1234, 0x400000, 0x1000, 0, "/usr/bin/test".to_string());
+        writer.write_mmap(&mmap).unwrap();
+
+        // Write SAMPLE event
+        let sample = SampleEvent::new(0, 0x400123, 1234, 1234, 1000, None, None);
+        writer.write_sample(&sample).unwrap();
+
+        writer.write_finished_round().unwrap();
+        writer.align_to_8_bytes().unwrap();
+        writer.finalize().unwrap();
+
+        let data = buffer.into_inner();
+        assert_eq!(&data[0..8], b"PERFILE2");
+        assert!(data.len() > 200); // Should have substantial content
+
+        #[cfg(feature = "evidence")]
+        {
+            let _ = std::fs::write(".sisyphus/evidence/test-events.perf.data", &data);
+        }
+    }
 }
 
 // Temporary stub types for backward compatibility during transition
@@ -684,63 +1257,6 @@ pub enum Event {
     Sample(SampleEvent),
     Mmap(MmapEvent),
     Comm(CommEvent),
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct SampleEvent {
-    pub header: PerfEventHeader,
-    pub ip: u64,
-    pub pid: u32,
-    pub tid: u32,
-    pub period: u64,
-    pub callchain: Vec<u64>,
-    pub cpu: Option<u32>,
-    /// Temporary: timestamp for backward compatibility (not in Linux perf header format)
-    #[allow(dead_code)]
-    pub timestamp: u64,
-}
-
-impl SampleEvent {
-    #[allow(dead_code)]
-    pub fn new(
-        time: u64,
-        ip: u64,
-        pid: u32,
-        tid: u32,
-        period: u64,
-        callchain: Vec<u64>,
-        cpu: Option<u32>,
-    ) -> Self {
-        Self {
-            header: PerfEventHeader::new(PERF_RECORD_SAMPLE, 24),
-            ip,
-            pid,
-            tid,
-            period,
-            callchain,
-            cpu,
-            timestamp: time,
-        }
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct MmapEvent {
-    pub pid: u32,
-    pub tid: u32,
-    pub addr: u64,
-    pub len: u64,
-    pub filename: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct CommEvent {
-    pub pid: u32,
-    pub tid: u32,
-    pub comm: String,
 }
 
 #[allow(dead_code)]
@@ -795,23 +1311,5 @@ impl PerfDataReader<File> {
             io::ErrorKind::Unsupported,
             "PerfDataReader not yet implemented for Linux perf format",
         )))
-    }
-}
-
-// Add stub methods to PerfDataWriter for backward compatibility
-impl<W: Write + Seek> PerfDataWriter<W> {
-    #[allow(dead_code)]
-    pub fn write_sample(&mut self, _sample: &SampleEvent) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "write_sample not yet implemented for Linux perf format",
-        ))
-    }
-}
-
-impl PerfDataWriter<File> {
-    #[allow(dead_code)]
-    pub fn finalize_with_header_update(mut self) -> io::Result<()> {
-        self.finalize()
     }
 }

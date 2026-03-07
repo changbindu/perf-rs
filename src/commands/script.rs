@@ -123,7 +123,7 @@ fn display_sample(
         .cloned()
         .unwrap_or_else(|| format!(":{}", sample.pid));
 
-    let timestamp = format_timestamp(sample.header.time);
+    let timestamp = format_timestamp(sample.time);
     let symbol = resolve_and_format(sample.ip, resolver);
     let event_name = "cycles";
 
@@ -132,10 +132,12 @@ fn display_sample(
         comm, sample.pid, sample.tid, timestamp, event_name, symbol
     );
 
-    if show_callchain && !sample.callchain.is_empty() {
-        for &addr in &sample.callchain {
-            let func = resolve_and_format(addr, resolver);
-            println!("\t{}", func);
+    if show_callchain {
+        if let Some(ref cc) = sample.callchain {
+            for &addr in cc {
+                let func = resolve_and_format(addr, resolver);
+                println!("\t{}", func);
+            }
         }
     }
 }
