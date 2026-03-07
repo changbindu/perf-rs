@@ -114,17 +114,17 @@ Report/Script output
 
    **Commit**: `feat(commands): integrate Linux perf reader with report command`
 
-- [ ] 5. Integrate with Script Command
+- [x] 5. Integrate with Script Command
    - Modify `src/commands/script.rs` to use PerfDataReader
    - Replace custom parsing with Linux perf reader
    - Handle both format versions
    - Maintain backward compatibility
 
    **Acceptance Criteria**:
-   - [ ] `cargo run -- script` works with Linux perf.data files
-   - [ ] `cargo run -- script` still works with old perf-rs format
-   - [ ] Displays sample stream with symbols
-   - [ ] Handles callchain display
+   - [x] `cargo run -- script` works with Linux perf.data files
+   - [x] `cargo run -- script` still works with old perf-rs format
+   - [x] Displays sample stream with symbols
+   - [x] Handles callchain display
 
    **Commit**: `feat(commands): integrate Linux perf reader with script command`
 
