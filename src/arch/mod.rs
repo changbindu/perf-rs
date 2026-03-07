@@ -195,7 +195,7 @@ impl SysfsEventDiscovery {
         let events_path = self.sysfs_path.join(device).join("events");
         let mut events = Vec::new();
 
-        if let Ok(entries) = fs::read_dir(&events_path) {
+        if let Ok(entries) = fs::read_dir(events_path) {
             for entry in entries.filter_map(|e| e.ok()) {
                 let file_name = entry.file_name();
                 let event_name = file_name.to_string_lossy();

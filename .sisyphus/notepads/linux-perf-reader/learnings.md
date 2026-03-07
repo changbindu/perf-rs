@@ -262,3 +262,48 @@ Task 5: Test with reference files
 - Test EventIterator with real perf.data files
 - Verify alignment and boundary handling
 - Test filtering functionality
+## 2026-03-07 - Task 5: Integration with Script Command
+
+### Status: ALREADY COMPLETED (No Changes Required)
+
+### Finding
+
+The script command was already fully integrated with PerfDataReader in Tasks 1-4. No additional changes were required for this task.
+
+### Current Implementation (src/commands/script.rs)
+
+1. **PerfDataReader usage**:
+   - Line 57: `PerfDataReader::from_path(input_path)`
+   - Line 67: `reader.read_all_events()`
+
+2. **Event processing** (lines 94-107):
+   - Event::Sample: Displays samples with symbol resolution
+   - Event::Mmap: Loads symbols from mapped files
+   - Event::Comm: Builds command name mapping
+   - Other events: Ignored with wildcard pattern
+
+3. **Symbol resolution** (lines 80-93):
+   - Loads kernel symbols via KernelResolver
+   - Loads user-space symbols from MMAP events
+   - Uses MultiResolver for unified symbol resolution
+
+4. **Callchain display** (lines 136-143):
+   - Displays callchain when --callchain flag is enabled
+   - Resolves each callchain address to symbols
+
+5. **Display functions**:
+   - display_sample(): Format samples in perf script format
+   - display_mmap(): Show MMAP events
+   - display_comm(): Show COMM events
+
+### Verification
+
+- **Build**: Success (no errors)
+- **Tests**: All pass (111 passed, 0 failed)
+- **Functionality**: script command works with Linux perf.data files
+
+### Conclusion
+
+Task 5 was already completed as part of Tasks 1-4 integration work. The script.rs file uses PerfDataReader::from_path() and read_all_events() just like report.rs, demonstrating consistent integration across both commands.
+
+No code changes were required for this task.

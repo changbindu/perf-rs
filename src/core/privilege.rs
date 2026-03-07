@@ -178,7 +178,7 @@ mod tests {
         let result = read_perf_event_paranoid();
         assert!(result.is_ok());
         let value = result.unwrap();
-        assert!(value >= -1 && value <= 10);
+        assert!((-1..=10).contains(&value));
     }
 
     #[test]

@@ -311,9 +311,7 @@ impl CallGraph {
                 })
                 .unwrap_or_else(|| "[unknown]".to_string());
             let comm = stats
-                .comm
-                .as_ref()
-                .map(|s| s.as_str())
+                .comm.as_deref()
                 .unwrap_or("[unknown]");
 
             println!(

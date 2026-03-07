@@ -458,6 +458,12 @@ pub struct FinishedRoundEvent {
     pub header: PerfEventHeader,
 }
 
+impl Default for FinishedRoundEvent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FinishedRoundEvent {
     pub fn new() -> Self {
         Self {
@@ -891,7 +897,7 @@ impl<W: Write + Seek> PerfDataWriter<W> {
             attrs_size += PERF_ATTR_SIZE_VER8 as u64;
 
             let ids_offset = ids_start;
-            let ids_size = (ids_end - ids_start) as u64;
+            let ids_size = ids_end - ids_start;
 
             self.writer.write_u64::<LittleEndian>(ids_offset)?;
             self.writer.write_u64::<LittleEndian>(ids_size)?;
@@ -1915,9 +1921,9 @@ impl<R: Read + Seek> PerfDataReader<R> {
     /// Note: This loads all events into memory, so use with caution for large files.
     pub fn read_all_events(&mut self) -> io::Result<Vec<Event>> {
         let mut events = Vec::new();
-        let mut iter = self.event_iter()?;
+        let iter = self.event_iter()?;
 
-        while let Some(event) = iter.next() {
+        for event in iter {
             events.push(event?);
         }
 
@@ -2056,13 +2062,13 @@ impl<'a, R: Read + Seek> Iterator for EventIterator<'a, R> {
         self.current_offset = current_pos;
 
         let event_result = match header.type_ {
-            PERF_RECORD_MMAP => MmapEvent::read_from(self.reader).map(|e| Event::Mmap(e)),
-            PERF_RECORD_COMM => CommEvent::read_from(self.reader).map(|e| Event::Comm(e)),
+            PERF_RECORD_MMAP => MmapEvent::read_from(self.reader).map(Event::Mmap),
+            PERF_RECORD_COMM => CommEvent::read_from(self.reader).map(Event::Comm),
             PERF_RECORD_SAMPLE => {
-                SampleEvent::read_from(self.reader, self.sample_type).map(|e| Event::Sample(e))
+                SampleEvent::read_from(self.reader, self.sample_type).map(Event::Sample)
             }
             PERF_RECORD_FINISHED_ROUND => {
-                FinishedRoundEvent::read_from(self.reader).map(|e| Event::FinishedRound(e))
+                FinishedRoundEvent::read_from(self.reader).map(Event::FinishedRound)
             }
             _ => {
                 let payload_size =

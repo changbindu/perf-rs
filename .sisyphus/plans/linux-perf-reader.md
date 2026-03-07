@@ -100,17 +100,17 @@ Report/Script output
 
    **Commit**: `feat(core): implement event iterator for perf.data files`
 
-- [ ] 4. Integrate with Report Command
+- [x] 4. Integrate with Report Command
    - Modify `src/commands/report.rs` to use PerfDataReader
    - Replace custom parsing with Linux perf reader
    - Handle both old format (PERFRS01) and new format (PERFILE2)
    - Maintain backward compatibility
 
    **Acceptance Criteria**:
-   - [ ] `cargo run -- report` works with Linux perf.data files
-   - [ ] `cargo run -- report` still works with old perf-rs format
-   - [ ] Displays function-level statistics
-   - [ ] Handles callchain visualization
+   - [x] `cargo run -- report` works with Linux perf.data files
+   - [x] `cargo run -- report` still works with old perf-rs format
+   - [x] Displays function-level statistics
+   - [x] Handles callchain visualization
 
    **Commit**: `feat(commands): integrate Linux perf reader with report command`
 

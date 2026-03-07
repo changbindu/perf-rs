@@ -63,7 +63,7 @@ fn write_process_events(
     }
 
     let maps_path = format!("/proc/{}/maps", pid);
-    if let Ok(maps_content) = std::fs::read_to_string(&maps_path) {
+    if let Ok(maps_content) = std::fs::read_to_string(maps_path) {
         for line in maps_content.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 5 {
