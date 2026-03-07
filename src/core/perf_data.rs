@@ -1806,23 +1806,332 @@ impl PerfDataReader<File> {
     }
 }
 
-// Temporary stub types for backward compatibility during transition
-// TODO: Remove these in Task 4 when proper integration is done
+// Event types for streaming from perf.data files
 
-#[allow(dead_code)]
+/// Enum representing all possible perf event types
 #[derive(Debug, Clone)]
 pub enum Event {
-    Sample(SampleEvent),
+    /// PERF_RECORD_MMAP: Memory mapping event
     Mmap(MmapEvent),
+    /// PERF_RECORD_LOST: Lost events
+    Lost(PerfEventHeader),
+    /// PERF_RECORD_COMM: Command name event
     Comm(CommEvent),
+    /// PERF_RECORD_EXIT: Exit event
+    Exit(PerfEventHeader),
+    /// PERF_RECORD_THROTTLE: Throttling event
+    Throttle(PerfEventHeader),
+    /// PERF_RECORD_UNTHROTTLE: Unthrottling event
+    Unthrottle(PerfEventHeader),
+    /// PERF_RECORD_FORK: Fork event
+    Fork(PerfEventHeader),
+    /// PERF_RECORD_READ: Read event
+    Read(PerfEventHeader),
+    /// PERF_RECORD_SAMPLE: Sample event
+    Sample(SampleEvent),
+    /// PERF_RECORD_MMAP2: Extended memory mapping event
+    Mmap2(PerfEventHeader),
+    /// PERF_RECORD_AUX: Auxiliary data
+    Aux(PerfEventHeader),
+    /// PERF_RECORD_ITRACE_START: Instruction trace start
+    ItraceStart(PerfEventHeader),
+    /// PERF_RECORD_LOST_SAMPLES: Lost samples
+    LostSamples(PerfEventHeader),
+    /// PERF_RECORD_SWITCH: Context switch event
+    Switch(PerfEventHeader),
+    /// PERF_RECORD_SWITCH_CPU_WIDE: CPU-wide context switch
+    SwitchCpuWide(PerfEventHeader),
+    /// PERF_RECORD_NAMESPACES: Namespaces event
+    Namespaces(PerfEventHeader),
+    /// PERF_RECORD_KSYMBOL: Kernel symbol event
+    Ksymbol(PerfEventHeader),
+    /// PERF_RECORD_BPF_EVENT: BPF event
+    BpfEvent(PerfEventHeader),
+    /// PERF_RECORD_CGROUP: Cgroup event
+    Cgroup(PerfEventHeader),
+    /// PERF_RECORD_TEXT_POKE: Text poke event
+    TextPoke(PerfEventHeader),
+    /// PERF_RECORD_AUX_OUTPUT_HW_ID: AUX output hardware ID
+    AuxOutputHwId(PerfEventHeader),
+    /// PERF_RECORD_CALLCHAIN_DEFERRED: Deferred callchain
+    CallchainDeferred(PerfEventHeader),
+    /// PERF_RECORD_FINISHED_ROUND: Round marker (batch boundary)
+    FinishedRound(FinishedRoundEvent),
+    /// PERF_RECORD_ID_INDEX: ID index
+    IdIndex(PerfEventHeader),
+    /// PERF_RECORD_AUXTRACE_INFO: AUX trace info
+    AuxtraceInfo(PerfEventHeader),
+    /// PERF_RECORD_AUXTRACE: AUX trace data
+    Auxtrace(PerfEventHeader),
+    /// PERF_RECORD_AUXTRACE_ERROR: AUX trace error
+    AuxtraceError(PerfEventHeader),
+    /// PERF_RECORD_HEADER_FEATURE: Header feature
+    HeaderFeature(PerfEventHeader),
+    /// PERF_RECORD_COMPRESSED: Compressed data
+    Compressed(PerfEventHeader),
+    /// PERF_RECORD_FINISHED_INIT: Finished initialization
+    FinishedInit(PerfEventHeader),
+    /// PERF_RECORD_COMPRESSED2: Compressed data (format 2)
+    Compressed2(PerfEventHeader),
+    /// Unknown event type
+    Unknown(PerfEventHeader),
 }
 
 impl<R: Read + Seek> PerfDataReader<R> {
-    #[allow(dead_code)]
-    pub fn read_all_events(&mut self) -> Result<Vec<Event>, PerfError> {
-        Err(PerfError::Io(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "PerfDataReader::read_all_events not yet implemented - event parsing in Task 2",
-        )))
+    /// Create an iterator over all events in the data section
+    ///
+    /// Returns an iterator that lazily reads events from the perf.data file.
+    /// Events are read one at a time, providing memory-efficient streaming.
+    pub fn event_iter(&mut self) -> io::Result<EventIterator<R>> {
+        EventIterator::new(&mut self.reader, self.data_offset, self.data_size)
+    }
+
+    /// Create a filtered iterator over events of a specific type
+    ///
+    /// # Arguments
+    ///
+    /// * `event_type` - The PERF_RECORD_* constant to filter by (e.g., PERF_RECORD_SAMPLE)
+    pub fn event_filter(&mut self, event_type: u16) -> io::Result<EventIterator<R>> {
+        EventIterator::with_filter(
+            &mut self.reader,
+            self.data_offset,
+            self.data_size,
+            event_type,
+        )
+    }
+
+    /// Read all events from the data section into a vector
+    ///
+    /// This method reads all events from the perf.data file and returns them as a Vec<Event>.
+    /// Note: This loads all events into memory, so use with caution for large files.
+    pub fn read_all_events(&mut self) -> io::Result<Vec<Event>> {
+        let iter = self.event_iter()?;
+        iter.collect()
+    }
+}
+
+/// Iterator for streaming events from perf.data files
+///
+/// Provides lazy parsing of events from the data section of a perf.data file.
+/// Events are read on-demand, making it memory-efficient for large files.
+pub struct EventIterator<'a, R: Read + Seek> {
+    reader: &'a mut R,
+    data_offset: u64,
+    data_size: u64,
+    current_offset: u64,
+    filter: Option<u16>,
+}
+
+impl<'a, R: Read + Seek> EventIterator<'a, R> {
+    /// Create a new event iterator
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - Mutable reference to the reader
+    /// * `data_offset` - Starting offset of the data section
+    /// * `data_size` - Size of the data section
+    fn new(reader: &'a mut R, data_offset: u64, data_size: u64) -> io::Result<Self> {
+        let mut iter = Self {
+            reader,
+            data_offset,
+            data_size,
+            current_offset: data_offset,
+            filter: None,
+        };
+        iter.seek_to_start()?;
+        Ok(iter)
+    }
+
+    /// Create a filtered event iterator
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - Mutable reference to the reader
+    /// * `data_offset` - Starting offset of the data section
+    /// * `data_size` - Size of the data section
+    /// * `event_type` - Event type to filter by (PERF_RECORD_* constant)
+    fn with_filter(
+        reader: &'a mut R,
+        data_offset: u64,
+        data_size: u64,
+        event_type: u16,
+    ) -> io::Result<Self> {
+        let mut iter = Self {
+            reader,
+            data_offset,
+            data_size,
+            current_offset: data_offset,
+            filter: Some(event_type),
+        };
+        iter.seek_to_start()?;
+        Ok(iter)
+    }
+
+    fn seek_to_start(&mut self) -> io::Result<()> {
+        self.reader.seek(SeekFrom::Start(self.data_offset))?;
+        self.current_offset = self.data_offset;
+        Ok(())
+    }
+
+    fn align_to_8_bytes(&mut self) -> io::Result<()> {
+        let current_pos = self.reader.stream_position()?;
+        let alignment = 8;
+        let padding = (alignment - (current_pos as usize % alignment)) % alignment;
+        if padding > 0 {
+            let mut padding_buf = vec![0u8; padding];
+            self.reader.read_exact(&mut padding_buf)?;
+        }
+        Ok(())
+    }
+}
+
+impl<'a, R: Read + Seek> Iterator for EventIterator<'a, R> {
+    type Item = io::Result<Event>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_offset >= self.data_offset + self.data_size {
+            return None;
+        }
+
+        let header_result = PerfEventHeader::read_from(self.reader);
+
+        let header = match header_result {
+            Ok(h) => h,
+            Err(e) => {
+                if e.kind() == io::ErrorKind::UnexpectedEof {
+                    return None;
+                }
+                return Some(Err(e));
+            }
+        };
+
+        let current_pos = match self.reader.stream_position() {
+            Ok(pos) => pos,
+            Err(e) => return Some(Err(e)),
+        };
+
+        if current_pos > self.data_offset + self.data_size {
+            return None;
+        }
+
+        self.current_offset = current_pos;
+
+        let event_result = match header.type_ {
+            PERF_RECORD_MMAP => MmapEvent::read_from(self.reader).map(|e| Event::Mmap(e)),
+            PERF_RECORD_COMM => CommEvent::read_from(self.reader).map(|e| Event::Comm(e)),
+            PERF_RECORD_SAMPLE => {
+                // TODO: Get proper sample_type from attributes
+                let sample_type =
+                    PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD;
+                SampleEvent::read_from(self.reader, sample_type).map(|e| Event::Sample(e))
+            }
+            PERF_RECORD_FINISHED_ROUND => {
+                FinishedRoundEvent::read_from(self.reader).map(|e| Event::FinishedRound(e))
+            }
+            _ => {
+                let payload_size =
+                    (header.size as usize).saturating_sub(PERF_EVENT_HEADER_SIZE as usize);
+                if payload_size > 0 {
+                    let mut payload = vec![0u8; payload_size];
+                    if let Err(e) = self.reader.read_exact(&mut payload) {
+                        return Some(Err(e));
+                    }
+                }
+
+                Ok(match header.type_ {
+                    PERF_RECORD_LOST => Event::Lost(header),
+                    PERF_RECORD_EXIT => Event::Exit(header),
+                    PERF_RECORD_THROTTLE => Event::Throttle(header),
+                    PERF_RECORD_UNTHROTTLE => Event::Unthrottle(header),
+                    PERF_RECORD_FORK => Event::Fork(header),
+                    PERF_RECORD_READ => Event::Read(header),
+                    PERF_RECORD_MMAP2 => Event::Mmap2(header),
+                    PERF_RECORD_AUX => Event::Aux(header),
+                    PERF_RECORD_ITRACE_START => Event::ItraceStart(header),
+                    PERF_RECORD_LOST_SAMPLES => Event::LostSamples(header),
+                    PERF_RECORD_SWITCH => Event::Switch(header),
+                    PERF_RECORD_SWITCH_CPU_WIDE => Event::SwitchCpuWide(header),
+                    PERF_RECORD_NAMESPACES => Event::Namespaces(header),
+                    PERF_RECORD_KSYMBOL => Event::Ksymbol(header),
+                    PERF_RECORD_BPF_EVENT => Event::BpfEvent(header),
+                    PERF_RECORD_CGROUP => Event::Cgroup(header),
+                    PERF_RECORD_TEXT_POKE => Event::TextPoke(header),
+                    PERF_RECORD_AUX_OUTPUT_HW_ID => Event::AuxOutputHwId(header),
+                    PERF_RECORD_CALLCHAIN_DEFERRED => Event::CallchainDeferred(header),
+                    PERF_RECORD_ID_INDEX => Event::IdIndex(header),
+                    PERF_RECORD_AUXTRACE_INFO => Event::AuxtraceInfo(header),
+                    PERF_RECORD_AUXTRACE => Event::Auxtrace(header),
+                    PERF_RECORD_AUXTRACE_ERROR => Event::AuxtraceError(header),
+                    PERF_RECORD_HEADER_FEATURE => Event::HeaderFeature(header),
+                    PERF_RECORD_COMPRESSED => Event::Compressed(header),
+                    PERF_RECORD_FINISHED_INIT => Event::FinishedInit(header),
+                    PERF_RECORD_COMPRESSED2 => Event::Compressed2(header),
+                    _ => Event::Unknown(header),
+                })
+            }
+        };
+
+        if let Err(e) = self.align_to_8_bytes() {
+            return Some(Err(e));
+        }
+
+        match self.reader.stream_position() {
+            Ok(pos) => self.current_offset = pos,
+            Err(e) => return Some(Err(e)),
+        }
+
+        match event_result {
+            Ok(event) => {
+                if let Some(filter_type) = self.filter {
+                    let matches_filter = match &event {
+                        Event::FinishedRound(_) => filter_type == PERF_RECORD_FINISHED_ROUND,
+                        Event::Mmap(_) => filter_type == PERF_RECORD_MMAP,
+                        Event::Comm(_) => filter_type == PERF_RECORD_COMM,
+                        Event::Sample(_) => filter_type == PERF_RECORD_SAMPLE,
+                        Event::Lost(_) => filter_type == PERF_RECORD_LOST,
+                        Event::Exit(_) => filter_type == PERF_RECORD_EXIT,
+                        Event::Throttle(_) => filter_type == PERF_RECORD_THROTTLE,
+                        Event::Unthrottle(_) => filter_type == PERF_RECORD_UNTHROTTLE,
+                        Event::Fork(_) => filter_type == PERF_RECORD_FORK,
+                        Event::Read(_) => filter_type == PERF_RECORD_READ,
+                        Event::Mmap2(_) => filter_type == PERF_RECORD_MMAP2,
+                        Event::Aux(_) => filter_type == PERF_RECORD_AUX,
+                        Event::ItraceStart(_) => filter_type == PERF_RECORD_ITRACE_START,
+                        Event::LostSamples(_) => filter_type == PERF_RECORD_LOST_SAMPLES,
+                        Event::Switch(_) => filter_type == PERF_RECORD_SWITCH,
+                        Event::SwitchCpuWide(_) => filter_type == PERF_RECORD_SWITCH_CPU_WIDE,
+                        Event::Namespaces(_) => filter_type == PERF_RECORD_NAMESPACES,
+                        Event::Ksymbol(_) => filter_type == PERF_RECORD_KSYMBOL,
+                        Event::BpfEvent(_) => filter_type == PERF_RECORD_BPF_EVENT,
+                        Event::Cgroup(_) => filter_type == PERF_RECORD_CGROUP,
+                        Event::TextPoke(_) => filter_type == PERF_RECORD_TEXT_POKE,
+                        Event::AuxOutputHwId(_) => filter_type == PERF_RECORD_AUX_OUTPUT_HW_ID,
+                        Event::CallchainDeferred(_) => {
+                            filter_type == PERF_RECORD_CALLCHAIN_DEFERRED
+                        }
+                        Event::IdIndex(_) => filter_type == PERF_RECORD_ID_INDEX,
+                        Event::AuxtraceInfo(_) => filter_type == PERF_RECORD_AUXTRACE_INFO,
+                        Event::Auxtrace(_) => filter_type == PERF_RECORD_AUXTRACE,
+                        Event::AuxtraceError(_) => filter_type == PERF_RECORD_AUXTRACE_ERROR,
+                        Event::HeaderFeature(_) => filter_type == PERF_RECORD_HEADER_FEATURE,
+                        Event::Compressed(_) => filter_type == PERF_RECORD_COMPRESSED,
+                        Event::FinishedInit(_) => filter_type == PERF_RECORD_FINISHED_INIT,
+                        Event::Compressed2(_) => filter_type == PERF_RECORD_COMPRESSED2,
+                        Event::Unknown(_) => false,
+                    };
+
+                    if !matches_filter {
+                        return self.next();
+                    }
+                }
+
+                if matches!(&event, Event::FinishedRound(_)) {
+                    return self.next();
+                }
+
+                Some(Ok(event))
+            }
+            Err(e) => Some(Err(e)),
+        }
     }
 }

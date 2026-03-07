@@ -102,6 +102,7 @@ pub fn execute(input: Option<&str>, _format: &str, show_callchain: bool) -> Resu
             Event::Comm(comm) => {
                 display_comm(&comm);
             }
+            _ => {}
         }
     }
 

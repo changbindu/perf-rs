@@ -71,7 +71,7 @@ Report/Script output
 
    **Commit**: `feat(core): implement PerfDataReader infrastructure`
 
-- [ ] 2. Implement Event Parsers
+- [x] 2. Implement Event Parsers
    - Implement SAMPLE event parser (IP, TID, TIME, PERIOD, CALLCHAIN)
    - Implement MMAP event parser (pid, tid, addr, len, pgoff, filename)
    - Implement COMM event parser (pid, tid, comm)
@@ -79,10 +79,10 @@ Report/Script output
    - Handle variable-length events and alignment
 
    **Acceptance Criteria**:
-   - [ ] All event types parse correctly from reference files
-   - [ ] Alignment handling works (8-byte boundaries)
-   - [ ] String parsing works (null-terminated, padded)
-   - [ ] Unit tests pass for each event type
+   - [x] All event types parse correctly from reference files
+   - [x] Alignment handling works (8-byte boundaries)
+   - [x] String parsing works (null-terminated, padded)
+   - [x] Unit tests pass for each event type
 
    **Commit**: `feat(core): implement event parsers for Linux perf format`
 
