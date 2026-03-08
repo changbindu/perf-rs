@@ -282,3 +282,15 @@ All unsafe blocks should have safety comments explaining the invariants.
 - Write descriptive commit messages
 - Keep commits atomic (one logical change per commit)
 - Run `cargo fmt` and `cargo clippy` before committing
+- **Always** add `Signed-off-by:` to commit messages by -s option
+- **Never** push to remote unless explicitly asked to do so
+
+### Binary File Parsing
+
+When parsing binary file formats (e.g., perf.data):
+
+1. **Avoid double-reading headers** - If an iterator reads a header, pass it to event parsers instead of having them read it again
+2. **Consume all event bytes** - Events may contain more data than indicated by metadata fields; always read `header.size` bytes total
+3. **Handle alignment padding** - Some formats pad between records for alignment; detect invalid headers and skip padding
+4. **Trace with external tools** - Use Python scripts or hexdump to trace byte-level parsing when debugging binary formats
+5. **Skip unknown struct fields** - When a struct's size in the file exceeds the parsed size, skip remaining bytes before continuing
