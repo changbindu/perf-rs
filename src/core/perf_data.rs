@@ -480,6 +480,10 @@ impl FinishedRoundEvent {
         let header = PerfEventHeader::read_from(reader)?;
         Ok(Self { header })
     }
+
+    pub fn read_from_header<R: Read>(_reader: &mut R, header: PerfEventHeader) -> io::Result<Self> {
+        Ok(Self { header })
+    }
 }
 
 // Sample type flags for PERF_RECORD_SAMPLE
@@ -543,9 +547,13 @@ impl MmapEvent {
     }
 
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let header = PerfEventHeader::read_from(reader)?;
+        Self::read_from_header(reader, header)
+    }
+
+    pub fn read_from_header<R: Read>(reader: &mut R, header: PerfEventHeader) -> io::Result<Self> {
         use byteorder::{LittleEndian, ReadBytesExt};
 
-        let header = PerfEventHeader::read_from(reader)?;
         let pid = reader.read_u32::<LittleEndian>()?;
         let tid = reader.read_u32::<LittleEndian>()?;
         let addr = reader.read_u64::<LittleEndian>()?;
@@ -604,9 +612,13 @@ impl CommEvent {
     }
 
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let header = PerfEventHeader::read_from(reader)?;
+        Self::read_from_header(reader, header)
+    }
+
+    pub fn read_from_header<R: Read>(reader: &mut R, header: PerfEventHeader) -> io::Result<Self> {
         use byteorder::{LittleEndian, ReadBytesExt};
 
-        let header = PerfEventHeader::read_from(reader)?;
         let pid = reader.read_u32::<LittleEndian>()?;
         let tid = reader.read_u32::<LittleEndian>()?;
         let comm = read_null_terminated_padded_string(reader, 8)?;
@@ -742,10 +754,20 @@ impl SampleEvent {
         Ok(())
     }
 
-    pub fn read_from<R: Read>(reader: &mut R, sample_type: u64) -> io::Result<Self> {
+    pub fn read_from<R: Read + Seek>(reader: &mut R, sample_type: u64) -> io::Result<Self> {
+        let header = PerfEventHeader::read_from(reader)?;
+        Self::read_from_header(reader, header, sample_type)
+    }
+
+    pub fn read_from_header<R: Read + Seek>(
+        reader: &mut R,
+        header: PerfEventHeader,
+        sample_type: u64,
+    ) -> io::Result<Self> {
         use byteorder::{LittleEndian, ReadBytesExt};
 
-        let header = PerfEventHeader::read_from(reader)?;
+        let start_pos = reader.stream_position().unwrap_or(0);
+        let payload_size = header.size as usize - PERF_EVENT_HEADER_SIZE as usize;
 
         let mut ip = 0u64;
         let mut pid = 0u32;
@@ -771,15 +793,29 @@ impl SampleEvent {
             period = reader.read_u64::<LittleEndian>()?;
         }
 
-        if sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
+        // Try to read callchain if there are remaining bytes
+        let current_pos = reader.stream_position().unwrap_or(0);
+        let bytes_read = (current_pos - start_pos) as usize;
+        let remaining = payload_size.saturating_sub(bytes_read);
+
+        if remaining >= 8 {
             let nr = reader.read_u64::<LittleEndian>()? as usize;
-            if nr > 0 {
+            if nr > 0 && nr * 8 + 8 <= remaining {
                 let mut chain = Vec::with_capacity(nr);
                 for _ in 0..nr {
                     chain.push(reader.read_u64::<LittleEndian>()?);
                 }
                 callchain = Some(chain);
             }
+        }
+
+        // Skip any remaining bytes to ensure we're at the correct position
+        let current_pos = reader.stream_position().unwrap_or(0);
+        let bytes_read = (current_pos - start_pos) as usize;
+        let remaining = payload_size.saturating_sub(bytes_read);
+        if remaining > 0 {
+            let mut skip = vec![0u8; remaining];
+            reader.read_exact(&mut skip)?;
         }
 
         Ok(Self {
@@ -1734,6 +1770,7 @@ impl<R: Read + Seek> PerfDataReader<R> {
 
         let attrs_offset = self.header.attrs.offset;
         let attrs_size = self.header.attrs.size;
+        let attr_size = self.header.attr_size as usize;
 
         if attrs_size == 0 {
             return Ok(());
@@ -1743,7 +1780,17 @@ impl<R: Read + Seek> PerfDataReader<R> {
 
         let attrs_end = attrs_offset + attrs_size;
         while self.reader.stream_position()? < attrs_end {
+            let pos_before = self.reader.stream_position()?;
             let attr = PerfEventAttr::read_from(&mut self.reader)?;
+            let pos_after = self.reader.stream_position()?;
+
+            let bytes_read = (pos_after - pos_before) as usize;
+            if bytes_read < attr_size {
+                let remaining = attr_size - bytes_read;
+                let mut skip = vec![0u8; remaining];
+                self.reader.read_exact(&mut skip)?;
+            }
+
             self.attrs.push(attr);
 
             let ids_offset = self.reader.read_u64::<LittleEndian>()?;
@@ -2061,14 +2108,69 @@ impl<'a, R: Read + Seek> Iterator for EventIterator<'a, R> {
 
         self.current_offset = current_pos;
 
+        let valid_type = matches!(
+            header.type_,
+            PERF_RECORD_MMAP
+                | PERF_RECORD_LOST
+                | PERF_RECORD_COMM
+                | PERF_RECORD_EXIT
+                | PERF_RECORD_THROTTLE
+                | PERF_RECORD_UNTHROTTLE
+                | PERF_RECORD_FORK
+                | PERF_RECORD_READ
+                | PERF_RECORD_SAMPLE
+                | PERF_RECORD_MMAP2
+                | PERF_RECORD_FINISHED_ROUND
+        );
+
+        if !valid_type || header.size < 6 || header.size > 10000 {
+            for _ in 0..7 {
+                let pos = self.reader.stream_position().ok()?;
+                if pos >= self.data_offset + self.data_size {
+                    return None;
+                }
+
+                let header2_result = PerfEventHeader::read_from(self.reader);
+                if let Ok(h2) = header2_result {
+                    let valid_type2 = matches!(
+                        h2.type_,
+                        PERF_RECORD_MMAP
+                            | PERF_RECORD_LOST
+                            | PERF_RECORD_COMM
+                            | PERF_RECORD_EXIT
+                            | PERF_RECORD_THROTTLE
+                            | PERF_RECORD_UNTHROTTLE
+                            | PERF_RECORD_FORK
+                            | PERF_RECORD_READ
+                            | PERF_RECORD_SAMPLE
+                            | PERF_RECORD_MMAP2
+                            | PERF_RECORD_FINISHED_ROUND
+                    );
+                    if valid_type2 && h2.size >= 6 && h2.size <= 10000 {
+                        self.current_offset = self.reader.stream_position().ok()?;
+                        return self.process_event(h2);
+                    }
+                }
+                self.reader.seek(SeekFrom::Start(pos + 1)).ok()?;
+            }
+            return None;
+        }
+
+        self.process_event(header)
+    }
+}
+
+impl<'a, R: Read + Seek> EventIterator<'a, R> {
+    fn process_event(&mut self, header: PerfEventHeader) -> Option<io::Result<Event>> {
         let event_result = match header.type_ {
-            PERF_RECORD_MMAP => MmapEvent::read_from(self.reader).map(Event::Mmap),
-            PERF_RECORD_COMM => CommEvent::read_from(self.reader).map(Event::Comm),
+            PERF_RECORD_MMAP => MmapEvent::read_from_header(self.reader, header).map(Event::Mmap),
+            PERF_RECORD_COMM => CommEvent::read_from_header(self.reader, header).map(Event::Comm),
             PERF_RECORD_SAMPLE => {
-                SampleEvent::read_from(self.reader, self.sample_type).map(Event::Sample)
+                SampleEvent::read_from_header(self.reader, header, self.sample_type)
+                    .map(Event::Sample)
             }
             PERF_RECORD_FINISHED_ROUND => {
-                FinishedRoundEvent::read_from(self.reader).map(Event::FinishedRound)
+                FinishedRoundEvent::read_from_header(self.reader, header).map(Event::FinishedRound)
             }
             _ => {
                 let payload_size =
@@ -2112,10 +2214,6 @@ impl<'a, R: Read + Seek> Iterator for EventIterator<'a, R> {
                 })
             }
         };
-
-        if let Err(e) = self.align_to_8_bytes() {
-            return Some(Err(e));
-        }
 
         match self.reader.stream_position() {
             Ok(pos) => self.current_offset = pos,
