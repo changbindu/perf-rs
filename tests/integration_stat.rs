@@ -9,22 +9,18 @@
 //!
 //! # Running Tests
 //!
-//! ## Without Root Privileges
-//! Tests that don't require root will run automatically:
+//! Tests that require perf permissions will automatically skip if permissions
+//! are not available. No root required if `kernel.perf_event_paranoid <= 0`.
+//!
 //! ```bash
+//! # Check your paranoid setting:
+//! cat /proc/sys/kernel/perf_event_paranoid
+//!
+//! # If paranoid <= 0, tests run without sudo:
 //! cargo test --test integration_stat
-//! ```
 //!
-//! ## With Root Privileges
-//! Tests requiring root are marked with `#[ignore]`. Run them with:
-//! ```bash
-//! sudo cargo test --test integration_stat -- --ignored
-//! ```
-//!
-//! ## All Tests
-//! To run both regular and ignored tests:
-//! ```bash
-//! sudo cargo test --test integration_stat -- --include-ignored
+//! # For paranoid > 0, run with sudo:
+//! sudo cargo test --test integration_stat
 //! ```
 
 use std::process::{Command, Stdio};
@@ -197,11 +193,10 @@ fn test_stat_per_cpu_without_system_wide_mode() {
 }
 
 // ============================================================================
-// Tests that REQUIRE root privileges (marked with #[ignore])
+// Tests that require perf permissions (auto-skip if not available)
 // ============================================================================
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
 fn test_stat_system_wide_aggregated() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -223,7 +218,7 @@ fn test_stat_system_wide_aggregated() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_system_wide_aggregated_no_command() {
     // System-wide stat without a command should run for a default duration
     if !has_system_wide_permission() {
@@ -245,7 +240,7 @@ fn test_stat_system_wide_aggregated_no_command() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_system_wide_per_cpu() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -271,7 +266,7 @@ fn test_stat_system_wide_per_cpu() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_system_wide_per_cpu_format() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -300,7 +295,7 @@ fn test_stat_system_wide_per_cpu_format() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_specific_cpu() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -318,7 +313,7 @@ fn test_stat_specific_cpu() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_specific_cpus_list() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -342,7 +337,7 @@ fn test_stat_specific_cpus_list() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_specific_cpus_range() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -366,7 +361,7 @@ fn test_stat_specific_cpus_range() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_specific_cpu_per_cpu_output() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -412,7 +407,7 @@ fn test_stat_specific_cpu_per_cpu_output() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_system_wide_with_custom_events() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -441,7 +436,7 @@ fn test_stat_system_wide_with_custom_events() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_system_wide_standalone_measurement() {
     // Test system-wide monitoring without a command (standalone mode)
     if !has_system_wide_permission() {
@@ -526,7 +521,7 @@ fn test_stat_system_wide_permission_error_message_quality() {
 // ============================================================================
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_aggregated_output_single_value_per_event() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -562,7 +557,7 @@ fn test_stat_aggregated_output_single_value_per_event() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_per_cpu_output_multiple_values_per_event() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -603,7 +598,7 @@ fn test_stat_per_cpu_output_multiple_values_per_event() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_per_cpu_sorted_by_cpu_id() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");
@@ -644,7 +639,7 @@ fn test_stat_per_cpu_sorted_by_cpu_id() {
 }
 
 #[test]
-#[ignore = "Requires root privileges. Run with: sudo cargo test --test integration_stat -- --ignored"]
+
 fn test_stat_output_includes_ipc() {
     if !has_system_wide_permission() {
         eprintln!("Skipping test: requires system-wide perf permissions");

@@ -2,6 +2,22 @@
 //!
 //! This test suite validates that perf-rs generates perf.data files that are
 //! fully compatible with the Linux perf tool (perf report, perf script).
+//!
+//! # Running Tests
+//!
+//! Tests that require perf permissions will automatically skip if permissions
+//! are not available. No root required if `kernel.perf_event_paranoid <= 0`.
+//!
+//! ```bash
+//! # Check your paranoid setting:
+//! cat /proc/sys/kernel/perf_event_paranoid
+//!
+//! # If paranoid <= 0, tests run without sudo:
+//! cargo test --test perf_compatibility
+//!
+//! # For paranoid > 0, run with sudo:
+//! sudo cargo test --test perf_compatibility
+//! ```
 
 use std::fs::File;
 use std::io::Read;
@@ -171,7 +187,7 @@ fn test_magic_number_validation() {
 }
 
 #[test]
-#[ignore = "Requires root/CAP_SYS_ADMIN permissions"]
+
 fn test_empty_recording() {
     if !has_perf_permission() {
         eprintln!("Skipping test: requires perf permissions");
@@ -213,7 +229,7 @@ fn test_empty_recording() {
 }
 
 #[test]
-#[ignore = "Requires root/CAP_SYS_ADMIN permissions"]
+
 fn test_simple_command() {
     if !has_perf_permission() {
         eprintln!("Skipping test: requires perf permissions");
@@ -256,7 +272,7 @@ fn test_simple_command() {
 }
 
 #[test]
-#[ignore = "Requires root/CAP_SYS_ADMIN permissions"]
+
 fn test_multithreaded_application() {
     if !has_perf_permission() {
         eprintln!("Skipping test: requires perf permissions");
@@ -357,7 +373,7 @@ fn main() {
 }
 
 #[test]
-#[ignore = "Requires root/CAP_SYS_ADMIN permissions"]
+
 fn test_large_file() {
     if !has_perf_permission() {
         eprintln!("Skipping test: requires perf permissions");
@@ -419,7 +435,7 @@ fn test_large_file() {
 }
 
 #[test]
-#[ignore = "Requires root/CAP_SYS_ADMIN permissions"]
+
 fn test_very_short_duration() {
     if !has_perf_permission() {
         eprintln!("Skipping test: requires perf permissions");
@@ -462,7 +478,7 @@ fn test_very_short_duration() {
 }
 
 #[test]
-#[ignore = "Requires root/CAP_SYS_ADMIN permissions"]
+
 fn test_specific_event() {
     if !has_perf_permission() {
         eprintln!("Skipping test: requires perf permissions");
@@ -503,7 +519,7 @@ fn test_specific_event() {
 }
 
 #[test]
-#[ignore = "Requires root/CAP_SYS_ADMIN permissions"]
+
 fn test_sample_period() {
     if !has_perf_permission() {
         eprintln!("Skipping test: requires perf permissions");
@@ -542,7 +558,7 @@ fn test_sample_period() {
 }
 
 #[test]
-#[ignore = "Requires root/CAP_SYS_ADMIN permissions"]
+
 fn test_system_wide_recording() {
     if !has_perf_permission() {
         eprintln!("Skipping test: requires perf permissions");

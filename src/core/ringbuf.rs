@@ -159,11 +159,27 @@ mod tests {
     use super::*;
     use perf_event::events::Hardware;
 
+    fn has_perf_permission() -> bool {
+        if unsafe { libc::getuid() } == 0 {
+            return true;
+        }
+
+        if let Ok(content) = std::fs::read_to_string("/proc/sys/kernel/perf_event_paranoid") {
+            if let Ok(level) = content.trim().parse::<i32>() {
+                return level <= 0;
+            }
+        }
+
+        false
+    }
+
     #[test]
-    #[ignore = "Requires root privileges or CAP_PERFMON capability"]
     fn test_from_event_for_cpu_creates_ring_buffer() {
-        // This test requires privileges, so it's marked as ignored by default
-        // Run with: cargo test -- --ignored
+        if !has_perf_permission() {
+            eprintln!("Skipping test: requires perf permissions");
+            return;
+        }
+
         let result = RingBuffer::from_event_for_cpu(Hardware::CPU_CYCLES, 0, 100000, false);
 
         assert!(
@@ -174,8 +190,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires root privileges or CAP_PERFMON capability"]
     fn test_from_event_for_cpu_different_cpus() {
+        if !has_perf_permission() {
+            eprintln!("Skipping test: requires perf permissions");
+            return;
+        }
+
         let result = RingBuffer::from_event_for_cpu(Hardware::INSTRUCTIONS, 0, 50000, false);
         assert!(
             result.is_ok(),
@@ -190,8 +210,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires root privileges or CAP_PERFMON capability"]
     fn test_from_event_for_cpu_enable_disable() {
+        if !has_perf_permission() {
+            eprintln!("Skipping test: requires perf permissions");
+            return;
+        }
+
         let mut ringbuf = RingBuffer::from_event_for_cpu(Hardware::CPU_CYCLES, 0, 100000, false)
             .expect("Failed to create ring buffer");
 
