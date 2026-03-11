@@ -38,7 +38,6 @@ pub fn execute(
     let mut reader = PerfDataReader::from_path(input_path)
         .with_context(|| format!("Failed to open {}", input_path))?;
 
-    let header = reader.header();
     let events = reader
         .read_all_events()
         .with_context(|| "Failed to read events")?;
@@ -310,9 +309,7 @@ impl CallGraph {
                     }
                 })
                 .unwrap_or_else(|| "[unknown]".to_string());
-            let comm = stats
-                .comm.as_deref()
-                .unwrap_or("[unknown]");
+            let comm = stats.comm.as_deref().unwrap_or("[unknown]");
 
             println!(
                 "{:>7.2}% {:>7.2}% {:>7.2}% {:>8} {:<30} {:<20} {:<15}",

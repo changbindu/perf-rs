@@ -57,15 +57,18 @@ pub fn execute(input: Option<&str>, _format: &str, show_callchain: bool) -> Resu
     let mut reader = PerfDataReader::from_path(input_path)
         .with_context(|| format!("Failed to open {}", input_path))?;
 
-    let header = reader.header();
-    if header.sample_count == 0 {
-        println!("No samples in {}", input_path);
-        return Ok(());
-    }
-
     let events = reader
         .read_all_events()
         .with_context(|| "Failed to read events")?;
+
+    let sample_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::Sample(_)))
+        .count();
+    if sample_count == 0 {
+        println!("No samples in {}", input_path);
+        return Ok(());
+    }
 
     let mut comm_map: HashMap<u32, String> = HashMap::new();
     for event in &events {

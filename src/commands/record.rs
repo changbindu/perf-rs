@@ -139,11 +139,16 @@ pub fn execute(
     period: Option<u64>,
     command: &[String],
 ) -> Result<()> {
+    let is_system_wide = all_cpus || cpu.is_some();
+    if pid.is_none() && !is_system_wide && command.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No command specified. Usage: perf record -- <command> [args...]"
+        ));
+    }
+
     let privilege_level = check_privilege().map_err(|e| PerfError::PermissionDenied {
         operation: e.to_string(),
     })?;
-
-    let is_system_wide = all_cpus || cpu.is_some();
 
     if is_system_wide {
         if !privilege_level.can_profile_system_wide() {
@@ -151,14 +156,20 @@ pub fn execute(
             for suggestion in privilege_level.suggestions() {
                 eprintln!("  {}", suggestion);
             }
-            std::process::exit(1);
+            return Err(PerfError::PermissionDenied {
+                operation: "system-wide profiling".to_string(),
+            }
+            .into());
         }
     } else if !privilege_level.can_profile() {
         eprintln!("Error: Insufficient privileges for performance monitoring.");
         for suggestion in privilege_level.suggestions() {
             eprintln!("  {}", suggestion);
         }
-        std::process::exit(1);
+        return Err(PerfError::PermissionDenied {
+            operation: "performance monitoring".to_string(),
+        }
+        .into());
     }
 
     let event = if let Some(event_str) = event {
@@ -194,10 +205,6 @@ pub fn execute(
         record_system_wide(cpus, event, sample_period, output_path)
     } else if let Some(target_pid) = pid {
         record_with_pid(target_pid, event, sample_period, output_path)
-    } else if command.is_empty() {
-        Err(anyhow::anyhow!(
-            "No command specified. Usage: perf record -- <command> [args...]"
-        ))
     } else {
         record_with_command(command, event, sample_period, output_path)
     }

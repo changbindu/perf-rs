@@ -100,15 +100,6 @@ pub struct PerfFileHeader {
     pub event_types: PerfFileSection,
     pub flags: u64,
     pub flags1: [u64; 3],
-    /// Temporary: sample_count for backward compatibility (not in Linux perf format)
-    #[allow(dead_code)]
-    pub sample_count: u64,
-    /// Temporary: mmap_count for backward compatibility (not in Linux perf format)
-    #[allow(dead_code)]
-    pub mmap_count: u64,
-    /// Temporary: comm_count for backward compatibility (not in Linux perf format)
-    #[allow(dead_code)]
-    pub comm_count: u64,
 }
 
 impl Default for PerfFileHeader {
@@ -122,9 +113,6 @@ impl Default for PerfFileHeader {
             event_types: PerfFileSection::default(),
             flags: 0,
             flags1: [0; 3],
-            sample_count: 0,
-            mmap_count: 0,
-            comm_count: 0,
         }
     }
 }
@@ -197,9 +185,6 @@ impl PerfFileHeader {
             event_types,
             flags,
             flags1,
-            sample_count: 0,
-            mmap_count: 0,
-            comm_count: 0,
         })
     }
 
@@ -1056,18 +1041,6 @@ impl PerfDataWriter<File> {
         let file = File::create(path)?;
         Ok(Self::new(file))
     }
-
-    /// Finalize the file and update header (backward compatibility method)
-    pub fn finalize_with_header_update(mut self) -> io::Result<()> {
-        self.header.data.size = self.data_size;
-
-        let header_start = 0;
-        self.writer.seek(SeekFrom::Start(header_start))?;
-        self.header.write_to(&mut self.writer)?;
-        self.writer.flush()?;
-
-        Ok(())
-    }
 }
 
 // Test Function
@@ -1749,9 +1722,6 @@ impl<R: Read + Seek> PerfDataReader<R> {
             event_types,
             flags,
             flags1,
-            sample_count: 0,
-            mmap_count: 0,
-            comm_count: 0,
         };
 
         self.header.validate().map_err(|e| {
@@ -1973,19 +1943,6 @@ impl<R: Read + Seek> PerfDataReader<R> {
         for event in iter {
             events.push(event?);
         }
-
-        self.header.sample_count = events
-            .iter()
-            .filter(|e| matches!(e, Event::Sample(_)))
-            .count() as u64;
-        self.header.mmap_count = events
-            .iter()
-            .filter(|e| matches!(e, Event::Mmap(_)))
-            .count() as u64;
-        self.header.comm_count = events
-            .iter()
-            .filter(|e| matches!(e, Event::Comm(_)))
-            .count() as u64;
 
         Ok(events)
     }

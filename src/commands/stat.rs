@@ -48,29 +48,37 @@ pub fn execute(
     per_cpu: bool,
     command: &[String],
 ) -> Result<()> {
+    let is_system_wide = all_cpus || cpu.is_some();
+    if pid.is_none() && !is_system_wide && command.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No command specified. Usage: perf stat -- <command> [args...]"
+        ));
+    }
+
     let privilege_level = check_privilege().map_err(|e| PerfError::PermissionDenied {
         operation: e.to_string(),
     })?;
 
-    let is_system_wide = all_cpus || cpu.is_some();
-
     if is_system_wide {
         if !privilege_level.can_profile_system_wide() {
             eprintln!("Error: Insufficient privileges for system-wide performance monitoring.");
-            eprintln!(
-                "System-wide profiling requires perf_event_paranoid <= 0 or CAP_PERFMON/CAP_SYS_ADMIN capability."
-            );
             for suggestion in privilege_level.suggestions() {
                 eprintln!("  {}", suggestion);
             }
-            std::process::exit(1);
+            return Err(PerfError::PermissionDenied {
+                operation: "system-wide performance monitoring".to_string(),
+            }
+            .into());
         }
     } else if !privilege_level.can_profile() {
         eprintln!("Error: Insufficient privileges for performance monitoring.");
         for suggestion in privilege_level.suggestions() {
             eprintln!("  {}", suggestion);
         }
-        std::process::exit(1);
+        return Err(PerfError::PermissionDenied {
+            operation: "performance monitoring".to_string(),
+        }
+        .into());
     }
 
     let events = if let Some(events_str) = event {
@@ -115,10 +123,6 @@ pub fn execute(
         }
     } else if let Some(target_pid) = pid {
         run_with_pid(target_pid, &events)
-    } else if command.is_empty() {
-        Err(anyhow::anyhow!(
-            "No command specified. Usage: perf stat -- <command> [args...]"
-        ))
     } else {
         run_with_counters(command, &events)
     }
