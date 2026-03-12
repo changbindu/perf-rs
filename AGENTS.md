@@ -276,6 +276,7 @@ All unsafe blocks should have safety comments explaining the invariants.
 4. **Always** clean up resources (close files, disable counters)
 5. Use `?` operator for error propagation
 6. Prefer `Result<T>` over panicking
+7. **Never** consider backward compatibility when editing code - prioritize code cleanliness and simplicity over maintaining compatibility with older versions
 
 ### Git Conventions
 
