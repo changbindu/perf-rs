@@ -59,7 +59,6 @@ impl RingBuffer {
             .sample(SampleFlag::IP)
             .sample(SampleFlag::TID)
             .sample(SampleFlag::TIME)
-            .sample(SampleFlag::CALLCHAIN)
             .build()
             .map_err(|e| PerfError::CounterSetup {
                 source: Box::new(e),
@@ -115,7 +114,6 @@ impl RingBuffer {
             .sample(SampleFlag::IP)
             .sample(SampleFlag::TID)
             .sample(SampleFlag::TIME)
-            .sample(SampleFlag::CALLCHAIN)
             .sample(SampleFlag::CPU)
             .build()
             .map_err(|e| PerfError::CounterSetup {

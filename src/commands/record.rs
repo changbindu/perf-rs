@@ -408,13 +408,10 @@ fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> O
             let time = sample.time().unwrap_or(0);
             let cpu = sample.cpu();
 
-            let callchain = sample.callchain().map(|c| c.to_vec()).unwrap_or_default();
-
             let sample_type = crate::core::perf_data::PERF_SAMPLE_IP
                 | crate::core::perf_data::PERF_SAMPLE_TID
                 | crate::core::perf_data::PERF_SAMPLE_TIME
-                | crate::core::perf_data::PERF_SAMPLE_PERIOD
-                | crate::core::perf_data::PERF_SAMPLE_CALLCHAIN;
+                | crate::core::perf_data::PERF_SAMPLE_PERIOD;
 
             Some(SampleEvent::new(
                 sample_type,
@@ -423,7 +420,7 @@ fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> O
                 pid,
                 tid,
                 sample_period,
-                Some(callchain),
+                None,
                 cpu,
             ))
         }
@@ -457,11 +454,10 @@ fn record_system_wide(
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
     let attr = hardware_to_attr(event, sample_period);
-    let event_ids: Vec<Vec<u64>> = cpus.iter().map(|_| vec![generate_event_id()]).collect();
-    let attrs: Vec<PerfEventAttr> = cpus.iter().map(|_| attr.clone()).collect();
+    let event_ids: Vec<u64> = cpus.iter().map(|_| generate_event_id()).collect();
 
     writer
-        .initialize(&attrs, &event_ids)
+        .initialize(&[attr], &[event_ids])
         .context("Failed to initialize perf.data file")?;
 
     let start_time = Instant::now();

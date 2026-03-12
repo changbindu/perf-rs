@@ -24,48 +24,48 @@ pub const PERF_FILE_HEADER_SIZE: u64 = 104;
 /// Size of perf_event_attr in kernel 6.17
 pub const PERF_ATTR_SIZE_VER8: u32 = 136;
 
-/// Event header size (6 bytes: type + misc + size)
-pub const PERF_EVENT_HEADER_SIZE: u16 = 6;
+/// Event header size (8 bytes: u32 type + u16 misc + u16 size)
+pub const PERF_EVENT_HEADER_SIZE: u16 = 8;
 
-/// FINISHED_ROUND event size (6 bytes - just the event header)
-pub const PERF_FINISHED_ROUND_SIZE: u16 = 6;
+/// FINISHED_ROUND event size (8 bytes - just the event header)
+pub const PERF_FINISHED_ROUND_SIZE: u16 = 8;
 
 // Perf record types
-pub const PERF_RECORD_MMAP: u16 = 1;
-pub const PERF_RECORD_LOST: u16 = 2;
-pub const PERF_RECORD_COMM: u16 = 3;
-pub const PERF_RECORD_EXIT: u16 = 4;
-pub const PERF_RECORD_THROTTLE: u16 = 5;
-pub const PERF_RECORD_UNTHROTTLE: u16 = 6;
-pub const PERF_RECORD_FORK: u16 = 7;
-pub const PERF_RECORD_READ: u16 = 8;
-pub const PERF_RECORD_SAMPLE: u16 = 9;
-pub const PERF_RECORD_MMAP2: u16 = 10;
-pub const PERF_RECORD_AUX: u16 = 11;
-pub const PERF_RECORD_ITRACE_START: u16 = 12;
-pub const PERF_RECORD_LOST_SAMPLES: u16 = 13;
-pub const PERF_RECORD_SWITCH: u16 = 14;
-pub const PERF_RECORD_SWITCH_CPU_WIDE: u16 = 15;
-pub const PERF_RECORD_NAMESPACES: u16 = 16;
-pub const PERF_RECORD_KSYMBOL: u16 = 17;
-pub const PERF_RECORD_BPF_EVENT: u16 = 18;
-pub const PERF_RECORD_CGROUP: u16 = 19;
-pub const PERF_RECORD_TEXT_POKE: u16 = 20;
-pub const PERF_RECORD_AUX_OUTPUT_HW_ID: u16 = 21;
-pub const PERF_RECORD_CALLCHAIN_DEFERRED: u16 = 22;
-pub const PERF_RECORD_HEADER_ATTR: u16 = 64;
-pub const PERF_RECORD_HEADER_EVENT_TYPE: u16 = 65;
-pub const PERF_RECORD_HEADER_TRACING_DATA: u16 = 66;
-pub const PERF_RECORD_HEADER_BUILD_ID: u16 = 67;
-pub const PERF_RECORD_FINISHED_ROUND: u16 = 68;
-pub const PERF_RECORD_ID_INDEX: u16 = 69;
-pub const PERF_RECORD_AUXTRACE_INFO: u16 = 70;
-pub const PERF_RECORD_AUXTRACE: u16 = 71;
-pub const PERF_RECORD_AUXTRACE_ERROR: u16 = 72;
-pub const PERF_RECORD_HEADER_FEATURE: u16 = 80;
-pub const PERF_RECORD_COMPRESSED: u16 = 81;
-pub const PERF_RECORD_FINISHED_INIT: u16 = 82;
-pub const PERF_RECORD_COMPRESSED2: u16 = 83;
+pub const PERF_RECORD_MMAP: u32 = 1;
+pub const PERF_RECORD_LOST: u32 = 2;
+pub const PERF_RECORD_COMM: u32 = 3;
+pub const PERF_RECORD_EXIT: u32 = 4;
+pub const PERF_RECORD_THROTTLE: u32 = 5;
+pub const PERF_RECORD_UNTHROTTLE: u32 = 6;
+pub const PERF_RECORD_FORK: u32 = 7;
+pub const PERF_RECORD_READ: u32 = 8;
+pub const PERF_RECORD_SAMPLE: u32 = 9;
+pub const PERF_RECORD_MMAP2: u32 = 10;
+pub const PERF_RECORD_AUX: u32 = 11;
+pub const PERF_RECORD_ITRACE_START: u32 = 12;
+pub const PERF_RECORD_LOST_SAMPLES: u32 = 13;
+pub const PERF_RECORD_SWITCH: u32 = 14;
+pub const PERF_RECORD_SWITCH_CPU_WIDE: u32 = 15;
+pub const PERF_RECORD_NAMESPACES: u32 = 16;
+pub const PERF_RECORD_KSYMBOL: u32 = 17;
+pub const PERF_RECORD_BPF_EVENT: u32 = 18;
+pub const PERF_RECORD_CGROUP: u32 = 19;
+pub const PERF_RECORD_TEXT_POKE: u32 = 20;
+pub const PERF_RECORD_AUX_OUTPUT_HW_ID: u32 = 21;
+pub const PERF_RECORD_CALLCHAIN_DEFERRED: u32 = 22;
+pub const PERF_RECORD_HEADER_ATTR: u32 = 64;
+pub const PERF_RECORD_HEADER_EVENT_TYPE: u32 = 65;
+pub const PERF_RECORD_HEADER_TRACING_DATA: u32 = 66;
+pub const PERF_RECORD_HEADER_BUILD_ID: u32 = 67;
+pub const PERF_RECORD_FINISHED_ROUND: u32 = 68;
+pub const PERF_RECORD_ID_INDEX: u32 = 69;
+pub const PERF_RECORD_AUXTRACE_INFO: u32 = 70;
+pub const PERF_RECORD_AUXTRACE: u32 = 71;
+pub const PERF_RECORD_AUXTRACE_ERROR: u32 = 72;
+pub const PERF_RECORD_HEADER_FEATURE: u32 = 80;
+pub const PERF_RECORD_COMPRESSED: u32 = 81;
+pub const PERF_RECORD_FINISHED_INIT: u32 = 82;
+pub const PERF_RECORD_COMPRESSED2: u32 = 83;
 
 // File Header Structures
 
@@ -392,11 +392,11 @@ impl PerfEventAttr {
 
 // Event Header and Records
 
-/// Common header for all event records (6 bytes, padded to 8-byte boundary)
+/// Common header for all event records (8 bytes: u32 type + u16 misc + u16 size)
 #[derive(Debug, Clone, Copy)]
 pub struct PerfEventHeader {
     /// Event type (PERF_RECORD_*)
-    pub type_: u16,
+    pub type_: u32,
     /// Additional flags
     pub misc: u16,
     /// Total size of the event record including header
@@ -404,7 +404,7 @@ pub struct PerfEventHeader {
 }
 
 impl PerfEventHeader {
-    pub fn new(type_: u16, size: u16) -> Self {
+    pub fn new(type_: u32, size: u16) -> Self {
         Self {
             type_,
             misc: 0,
@@ -419,7 +419,7 @@ impl PerfEventHeader {
 
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         use byteorder::{LittleEndian, WriteBytesExt};
-        writer.write_u16::<LittleEndian>(self.type_)?;
+        writer.write_u32::<LittleEndian>(self.type_)?;
         writer.write_u16::<LittleEndian>(self.misc)?;
         writer.write_u16::<LittleEndian>(self.size)?;
         Ok(())
@@ -428,7 +428,7 @@ impl PerfEventHeader {
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         use byteorder::{LittleEndian, ReadBytesExt};
         Ok(Self {
-            type_: reader.read_u16::<LittleEndian>()?,
+            type_: reader.read_u32::<LittleEndian>()?,
             misc: reader.read_u16::<LittleEndian>()?,
             size: reader.read_u16::<LittleEndian>()?,
         })
@@ -500,10 +500,9 @@ pub struct MmapEvent {
 
 impl MmapEvent {
     pub fn new(pid: u32, tid: u32, addr: u64, len: u64, pgoff: u64, filename: String) -> Self {
-        // Calculate size: header (6) + pid (4) + tid (4) + addr (8) + len (8) + pgoff (8) + filename (with null and padding)
-        let filename_bytes_len = filename.len() + 1; // +1 for null terminator
-        let padded_len = ((filename_bytes_len + 7) / 8) * 8; // Pad to 8 bytes
-        let total_size = 6 + 4 + 4 + 8 + 8 + 8 + padded_len;
+        let filename_bytes_len = filename.len() + 1;
+        let padded_len = ((filename_bytes_len + 7) / 8) * 8;
+        let total_size = 8 + 4 + 4 + 8 + 8 + 8 + padded_len;
 
         Self {
             header: PerfEventHeader::new(PERF_RECORD_MMAP, total_size as u16),
@@ -571,10 +570,9 @@ pub struct CommEvent {
 
 impl CommEvent {
     pub fn new(pid: u32, tid: u32, comm: String) -> Self {
-        // Calculate size: header (6) + pid (4) + tid (4) + comm (with null and padding)
-        let comm_bytes_len = comm.len() + 1; // +1 for null terminator
-        let padded_len = ((comm_bytes_len + 7) / 8) * 8; // Pad to 8 bytes
-        let total_size = 6 + 4 + 4 + padded_len;
+        let comm_bytes_len = comm.len() + 1;
+        let padded_len = ((comm_bytes_len + 7) / 8) * 8;
+        let total_size = 8 + 4 + 4 + padded_len;
 
         Self {
             header: PerfEventHeader::new(PERF_RECORD_COMM, total_size as u16),
@@ -644,7 +642,7 @@ impl SampleEvent {
         callchain: Option<Vec<u64>>,
         cpu: Option<u32>,
     ) -> Self {
-        let mut size = 6u16;
+        let mut size = 8u16;
 
         if sample_type & PERF_SAMPLE_IP != 0 {
             size += 8;
@@ -655,13 +653,15 @@ impl SampleEvent {
         if sample_type & PERF_SAMPLE_TIME != 0 {
             size += 8;
         }
+        // Fields must be in bit order: CALLCHAIN (bit 5) before PERIOD (bit 8)
+        if sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
+            size += 8;
+            if let Some(ref cc) = callchain {
+                size += (cc.len() as u16) * 8;
+            }
+        }
         if sample_type & PERF_SAMPLE_PERIOD != 0 {
             size += 8;
-        }
-        if let Some(ref cc) = callchain {
-            if !cc.is_empty() {
-                size += 8 + (cc.len() as u16 * 8);
-            }
         }
 
         Self {
@@ -678,7 +678,7 @@ impl SampleEvent {
     }
 
     fn calculate_size(&self) -> u16 {
-        let mut size = 6u16; // Header size
+        let mut size = 8u16;
 
         if self.sample_type & PERF_SAMPLE_IP != 0 {
             size += 8;
@@ -689,14 +689,15 @@ impl SampleEvent {
         if self.sample_type & PERF_SAMPLE_TIME != 0 {
             size += 8;
         }
+        // Fields must be in bit order: CALLCHAIN (bit 5) before PERIOD (bit 8)
+        if self.sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
+            size += 8;
+            if let Some(ref cc) = self.callchain {
+                size += (cc.len() as u16) * 8;
+            }
+        }
         if self.sample_type & PERF_SAMPLE_PERIOD != 0 {
             size += 8;
-        }
-        if let Some(ref cc) = self.callchain {
-            if !cc.is_empty() {
-                // nr (u64) + nr * u64 for each IP
-                size += 8 + (cc.len() as u16 * 8);
-            }
         }
 
         size
@@ -723,17 +724,23 @@ impl SampleEvent {
             writer.write_u64::<LittleEndian>(self.time)?;
         }
 
-        if self.sample_type & PERF_SAMPLE_PERIOD != 0 {
-            writer.write_u64::<LittleEndian>(self.period)?;
-        }
-
-        if let Some(ref cc) = self.callchain {
-            if !cc.is_empty() {
-                writer.write_u64::<LittleEndian>(cc.len() as u64)?;
+        // Fields must be written in bit order: CALLCHAIN (bit 5) before PERIOD (bit 8)
+        if self.sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
+            let nr = self
+                .callchain
+                .as_ref()
+                .map(|cc| cc.len() as u64)
+                .unwrap_or(0);
+            writer.write_u64::<LittleEndian>(nr)?;
+            if let Some(ref cc) = self.callchain {
                 for ip in cc {
                     writer.write_u64::<LittleEndian>(*ip)?;
                 }
             }
+        }
+
+        if self.sample_type & PERF_SAMPLE_PERIOD != 0 {
+            writer.write_u64::<LittleEndian>(self.period)?;
         }
 
         Ok(())
@@ -774,24 +781,20 @@ impl SampleEvent {
             time = reader.read_u64::<LittleEndian>()?;
         }
 
-        if sample_type & PERF_SAMPLE_PERIOD != 0 {
-            period = reader.read_u64::<LittleEndian>()?;
-        }
-
-        // Try to read callchain if there are remaining bytes
-        let current_pos = reader.stream_position().unwrap_or(0);
-        let bytes_read = (current_pos - start_pos) as usize;
-        let remaining = payload_size.saturating_sub(bytes_read);
-
-        if remaining >= 8 {
+        // Fields must be read in bit order: CALLCHAIN (bit 5) before PERIOD (bit 8)
+        if sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
             let nr = reader.read_u64::<LittleEndian>()? as usize;
-            if nr > 0 && nr * 8 + 8 <= remaining {
+            if nr > 0 {
                 let mut chain = Vec::with_capacity(nr);
                 for _ in 0..nr {
                     chain.push(reader.read_u64::<LittleEndian>()?);
                 }
                 callchain = Some(chain);
             }
+        }
+
+        if sample_type & PERF_SAMPLE_PERIOD != 0 {
+            period = reader.read_u64::<LittleEndian>()?;
         }
 
         // Skip any remaining bytes to ensure we're at the correct position
@@ -912,17 +915,18 @@ impl<W: Write + Seek> PerfDataWriter<W> {
             writer_write_padding(&mut self.writer, padding_to_attrs as usize)?;
         }
 
+        // Each attr entry is: perf_event_attr (136 bytes) + ids_offset (8) + ids_size (8) = 152 bytes
+        let attr_entry_size = PERF_ATTR_SIZE_VER8 as u64 + 16;
         let mut attrs_size = 0u64;
         for (attr, _id_vec) in attrs.iter().zip(ids.iter()) {
             attr.write_to(&mut self.writer)?;
-            attrs_size += PERF_ATTR_SIZE_VER8 as u64;
 
             let ids_offset = ids_start;
             let ids_size = ids_end - ids_start;
 
             self.writer.write_u64::<LittleEndian>(ids_offset)?;
             self.writer.write_u64::<LittleEndian>(ids_size)?;
-            attrs_size += 16;
+            attrs_size += attr_entry_size;
         }
 
         let current_pos = self.writer.stream_position()?;
@@ -933,6 +937,7 @@ impl<W: Write + Seek> PerfDataWriter<W> {
             writer_write_padding(&mut self.writer, padding_to_data as usize)?;
         }
 
+        self.header.attr_size = attr_entry_size;
         self.header.attrs.offset = attrs_start;
         self.header.attrs.size = attrs_size;
         self.header.data.offset = self.data_start_offset;
@@ -1082,17 +1087,19 @@ mod tests {
 
         assert_eq!(buffer.len(), PERF_FINISHED_ROUND_SIZE as usize);
 
-        // type_ (u16 little-endian): bytes 0-1
+        // type_ (u32 little-endian): bytes 0-3
         assert_eq!(buffer[0], 68);
         assert_eq!(buffer[1], 0);
-
-        // misc (u16 little-endian): bytes 2-3
         assert_eq!(buffer[2], 0);
         assert_eq!(buffer[3], 0);
 
-        // size (u16 little-endian): bytes 4-5
-        assert_eq!(buffer[4], 6);
+        // misc (u16 little-endian): bytes 4-5
+        assert_eq!(buffer[4], 0);
         assert_eq!(buffer[5], 0);
+
+        // size (u16 little-endian): bytes 6-7
+        assert_eq!(buffer[6], 8);
+        assert_eq!(buffer[7], 0);
     }
 
     #[test]
@@ -1163,44 +1170,41 @@ mod tests {
 
         // Verify header
         assert_eq!(buffer[0], 1); // MMAP type
-        assert_eq!(buffer[1], 0); // type MSB
+        assert_eq!(buffer[1], 0);
+        assert_eq!(buffer[2], 0);
+        assert_eq!(buffer[3], 0);
         assert_eq!(
-            u16::from_le_bytes([buffer[4], buffer[5]]),
+            u16::from_le_bytes([buffer[6], buffer[7]]),
             buffer.len() as u16
-        ); // size
+        );
 
-        // Verify pid/tid
-        let pid = u32::from_le_bytes([buffer[6], buffer[7], buffer[8], buffer[9]]);
-        let tid = u32::from_le_bytes([buffer[10], buffer[11], buffer[12], buffer[13]]);
+        // Verify pid/tid (starts at offset 8)
+        let pid = u32::from_le_bytes([buffer[8], buffer[9], buffer[10], buffer[11]]);
+        let tid = u32::from_le_bytes([buffer[12], buffer[13], buffer[14], buffer[15]]);
         assert_eq!(pid, 1234);
         assert_eq!(tid, 5678);
 
         // Verify filename with null terminator
-        let filename_start = 6 + 4 + 4 + 8 + 8 + 8; // After header + pid + tid + addr + len + pgoff
+        let filename_start = 8 + 4 + 4 + 8 + 8 + 8;
         let filename_bytes = &buffer[filename_start..];
         assert_eq!(&filename_bytes[0..12], b"/usr/bin/ls\0");
     }
 
     #[test]
     fn test_mmap_event_alignment() {
-        // Test that filename is properly padded to 8-byte alignment
         let short_filename = "ls";
         let mmap = MmapEvent::new(1234, 5678, 0, 0x1000, 0, short_filename.to_string());
 
         let mut buffer = Vec::new();
         mmap.write_to(&mut buffer).unwrap();
 
-        // The filename field should be padded to 8 bytes
-        // Filename starts at offset: header(6) + pid(4) + tid(4) + addr(8) + len(8) + pgoff(8) = 38
-        let filename_start = 38;
-        // "ls" (2 bytes) + null (1 byte) + padding (5 bytes) = 8 bytes total
+        let filename_start = 8 + 4 + 4 + 8 + 8 + 8;
         assert_eq!(&buffer[filename_start..filename_start + 2], b"ls");
-        assert_eq!(buffer[filename_start + 2], 0); // null terminator
-                                                   // The next 5 bytes should be padding (zeros)
+        assert_eq!(buffer[filename_start + 2], 0);
         assert_eq!(&buffer[filename_start + 3..filename_start + 8], &[0u8; 5]);
 
         // Total buffer size
-        assert_eq!(buffer.len(), 46);
+        assert_eq!(buffer.len(), 48);
         assert_eq!(mmap.header.size as usize, buffer.len());
     }
 
@@ -1218,40 +1222,38 @@ mod tests {
 
         // Verify header
         assert_eq!(buffer[0], 3); // COMM type
-        assert_eq!(buffer[1], 0); // type MSB
+        assert_eq!(buffer[1], 0);
+        assert_eq!(buffer[2], 0);
+        assert_eq!(buffer[3], 0);
 
-        // Verify pid/tid
-        let pid = u32::from_le_bytes([buffer[6], buffer[7], buffer[8], buffer[9]]);
-        let tid = u32::from_le_bytes([buffer[10], buffer[11], buffer[12], buffer[13]]);
+        // Verify pid/tid (starts at offset 8)
+        let pid = u32::from_le_bytes([buffer[8], buffer[9], buffer[10], buffer[11]]);
+        let tid = u32::from_le_bytes([buffer[12], buffer[13], buffer[14], buffer[15]]);
         assert_eq!(pid, 1234);
         assert_eq!(tid, 5678);
 
         // Verify comm string with null terminator
-        let comm_start = 6 + 4 + 4; // After header + pid + tid
+        let comm_start = 8 + 4 + 4;
         let comm_bytes = &buffer[comm_start..];
         assert_eq!(&comm_bytes[0..13], b"test-program\0");
     }
 
     #[test]
     fn test_comm_event_alignment() {
-        // Test that comm is properly padded to 8-byte alignment
         let short_comm = "sh";
         let comm = CommEvent::new(1234, 5678, short_comm.to_string());
 
         let mut buffer = Vec::new();
         comm.write_to(&mut buffer).unwrap();
 
-        // The comm field should be padded to 8 bytes
-        // Comm starts at offset: header(6) + pid(4) + tid(4) = 14
-        let comm_start = 14;
-        // "sh" (2 bytes) + null (1 byte) + padding (5 bytes) = 8 bytes total
+        let comm_start = 8 + 4 + 4;
         assert_eq!(&buffer[comm_start..comm_start + 2], b"sh");
-        assert_eq!(buffer[comm_start + 2], 0); // null terminator
-                                               // The next 5 bytes should be padding (zeros)
+        assert_eq!(buffer[comm_start + 2], 0);
+        assert_eq!(&buffer[comm_start + 3..comm_start + 8], &[0u8; 5]);
         assert_eq!(&buffer[comm_start + 3..comm_start + 8], &[0u8; 5]);
 
-        // Total buffer size: 6 + 4 + 4 + 8 = 22 bytes
-        assert_eq!(buffer.len(), 22);
+        // Total buffer size: 8 + 4 + 4 + 8 = 24 bytes
+        assert_eq!(buffer.len(), 24);
         assert_eq!(comm.header.size as usize, buffer.len());
     }
 
@@ -1279,27 +1281,29 @@ mod tests {
 
         assert_eq!(buffer[0], 9);
         assert_eq!(buffer[1], 0);
+        assert_eq!(buffer[2], 0);
+        assert_eq!(buffer[3], 0);
 
         let ip = u64::from_le_bytes([
-            buffer[6], buffer[7], buffer[8], buffer[9], buffer[10], buffer[11], buffer[12],
-            buffer[13],
+            buffer[8], buffer[9], buffer[10], buffer[11], buffer[12], buffer[13], buffer[14],
+            buffer[15],
         ]);
         assert_eq!(ip, 0x7f0000001000);
 
-        let pid = u32::from_le_bytes([buffer[14], buffer[15], buffer[16], buffer[17]]);
-        let tid = u32::from_le_bytes([buffer[18], buffer[19], buffer[20], buffer[21]]);
+        let pid = u32::from_le_bytes([buffer[16], buffer[17], buffer[18], buffer[19]]);
+        let tid = u32::from_le_bytes([buffer[20], buffer[21], buffer[22], buffer[23]]);
         assert_eq!(pid, 1234);
         assert_eq!(tid, 5678);
 
         let time = u64::from_le_bytes([
-            buffer[22], buffer[23], buffer[24], buffer[25], buffer[26], buffer[27], buffer[28],
-            buffer[29],
+            buffer[24], buffer[25], buffer[26], buffer[27], buffer[28], buffer[29], buffer[30],
+            buffer[31],
         ]);
         assert_eq!(time, 0);
 
         let period = u64::from_le_bytes([
-            buffer[30], buffer[31], buffer[32], buffer[33], buffer[34], buffer[35], buffer[36],
-            buffer[37],
+            buffer[32], buffer[33], buffer[34], buffer[35], buffer[36], buffer[37], buffer[38],
+            buffer[39],
         ]);
         assert_eq!(period, 1000);
     }
@@ -1321,8 +1325,8 @@ mod tests {
         sample.write_to(&mut buffer).unwrap();
 
         let time = u64::from_le_bytes([
-            buffer[22], buffer[23], buffer[24], buffer[25], buffer[26], buffer[27], buffer[28],
-            buffer[29],
+            buffer[24], buffer[25], buffer[26], buffer[27], buffer[28], buffer[29], buffer[30],
+            buffer[31],
         ]);
         assert_eq!(time, 1234567890123456);
     }
@@ -1349,36 +1353,31 @@ mod tests {
         sample.write_to(&mut buffer).unwrap();
 
         let ip = u64::from_le_bytes([
-            buffer[6], buffer[7], buffer[8], buffer[9], buffer[10], buffer[11], buffer[12],
-            buffer[13],
+            buffer[8], buffer[9], buffer[10], buffer[11], buffer[12], buffer[13], buffer[14],
+            buffer[15],
         ]);
         assert_eq!(ip, 0x7f0000001000);
 
-        let pid = u32::from_le_bytes([buffer[14], buffer[15], buffer[16], buffer[17]]);
-        let tid = u32::from_le_bytes([buffer[18], buffer[19], buffer[20], buffer[21]]);
+        let pid = u32::from_le_bytes([buffer[16], buffer[17], buffer[18], buffer[19]]);
+        let tid = u32::from_le_bytes([buffer[20], buffer[21], buffer[22], buffer[23]]);
         assert_eq!(pid, 0);
         assert_eq!(tid, 0);
 
         let time = u64::from_le_bytes([
-            buffer[22], buffer[23], buffer[24], buffer[25], buffer[26], buffer[27], buffer[28],
-            buffer[29],
+            buffer[24], buffer[25], buffer[26], buffer[27], buffer[28], buffer[29], buffer[30],
+            buffer[31],
         ]);
         assert_eq!(time, 0);
 
-        let period = u64::from_le_bytes([
-            buffer[30], buffer[31], buffer[32], buffer[33], buffer[34], buffer[35], buffer[36],
-            buffer[37],
-        ]);
-        assert_eq!(period, 0);
-
+        // CALLCHAIN (bit 5) comes before PERIOD (bit 8)
         let nr = u64::from_le_bytes([
-            buffer[38], buffer[39], buffer[40], buffer[41], buffer[42], buffer[43], buffer[44],
-            buffer[45],
+            buffer[32], buffer[33], buffer[34], buffer[35], buffer[36], buffer[37], buffer[38],
+            buffer[39],
         ]);
         assert_eq!(nr, 3);
 
         for i in 0..3 {
-            let offset = 46 + (i * 8);
+            let offset = 40 + (i * 8);
             let addr = u64::from_le_bytes([
                 buffer[offset],
                 buffer[offset + 1],
@@ -1391,6 +1390,13 @@ mod tests {
             ]);
             assert_eq!(addr, callchain[i]);
         }
+
+        // PERIOD comes after callchain
+        let period = u64::from_le_bytes([
+            buffer[64], buffer[65], buffer[66], buffer[67], buffer[68], buffer[69], buffer[70],
+            buffer[71],
+        ]);
+        assert_eq!(period, 0);
     }
 
     #[test]
@@ -1407,7 +1413,7 @@ mod tests {
         );
 
         let size = sample.calculate_size();
-        assert_eq!(size, 38);
+        assert_eq!(size, 40);
 
         let mut buffer = Vec::new();
         sample.write_to(&mut buffer).unwrap();
@@ -1740,7 +1746,8 @@ impl<R: Read + Seek> PerfDataReader<R> {
 
         let attrs_offset = self.header.attrs.offset;
         let attrs_size = self.header.attrs.size;
-        let attr_size = self.header.attr_size as usize;
+        // attr_size from header is the total entry size (attr + ids_offset + ids_size)
+        let entry_size = self.header.attr_size as usize;
 
         if attrs_size == 0 {
             return Ok(());
@@ -1750,19 +1757,12 @@ impl<R: Read + Seek> PerfDataReader<R> {
 
         let attrs_end = attrs_offset + attrs_size;
         while self.reader.stream_position()? < attrs_end {
-            let pos_before = self.reader.stream_position()?;
+            // Read the attr structure (variable size based on attr.size field)
             let attr = PerfEventAttr::read_from(&mut self.reader)?;
-            let pos_after = self.reader.stream_position()?;
-
-            let bytes_read = (pos_after - pos_before) as usize;
-            if bytes_read < attr_size {
-                let remaining = attr_size - bytes_read;
-                let mut skip = vec![0u8; remaining];
-                self.reader.read_exact(&mut skip)?;
-            }
 
             self.attrs.push(attr);
 
+            // Read ids_offset and ids_size (these are part of the attr entry)
             let ids_offset = self.reader.read_u64::<LittleEndian>()?;
             let ids_size = self.reader.read_u64::<LittleEndian>()?;
 
@@ -1780,6 +1780,15 @@ impl<R: Read + Seek> PerfDataReader<R> {
             }
 
             self.event_ids.push(ids);
+
+            // Skip any remaining bytes to align to entry_size boundary
+            // This handles cases where the file has padding or future extensions
+            let bytes_consumed = PERF_ATTR_SIZE_VER8 as usize + 16; // attr + ids_offset + ids_size
+            if bytes_consumed < entry_size {
+                let remaining = entry_size - bytes_consumed;
+                let mut skip = vec![0u8; remaining];
+                self.reader.read_exact(&mut skip)?;
+            }
         }
 
         Ok(())
@@ -1921,7 +1930,7 @@ impl<R: Read + Seek> PerfDataReader<R> {
     /// # Arguments
     ///
     /// * `event_type` - The PERF_RECORD_* constant to filter by (e.g., PERF_RECORD_SAMPLE)
-    pub fn event_filter(&mut self, event_type: u16) -> io::Result<EventIterator<R>> {
+    pub fn event_filter(&mut self, event_type: u32) -> io::Result<EventIterator<R>> {
         let sample_type = self.attrs.first().map(|a| a.sample_type).unwrap_or(0);
         EventIterator::with_filter(
             &mut self.reader,
@@ -1957,7 +1966,7 @@ pub struct EventIterator<'a, R: Read + Seek> {
     data_offset: u64,
     data_size: u64,
     current_offset: u64,
-    filter: Option<u16>,
+    filter: Option<u32>,
     sample_type: u64,
 }
 
@@ -2001,7 +2010,7 @@ impl<'a, R: Read + Seek> EventIterator<'a, R> {
         reader: &'a mut R,
         data_offset: u64,
         data_size: u64,
-        event_type: u16,
+        event_type: u32,
         sample_type: u64,
     ) -> io::Result<Self> {
         let mut iter = Self {
@@ -2065,51 +2074,8 @@ impl<'a, R: Read + Seek> Iterator for EventIterator<'a, R> {
 
         self.current_offset = current_pos;
 
-        let valid_type = matches!(
-            header.type_,
-            PERF_RECORD_MMAP
-                | PERF_RECORD_LOST
-                | PERF_RECORD_COMM
-                | PERF_RECORD_EXIT
-                | PERF_RECORD_THROTTLE
-                | PERF_RECORD_UNTHROTTLE
-                | PERF_RECORD_FORK
-                | PERF_RECORD_READ
-                | PERF_RECORD_SAMPLE
-                | PERF_RECORD_MMAP2
-                | PERF_RECORD_FINISHED_ROUND
-        );
-
-        if !valid_type || header.size < 6 || header.size > 10000 {
-            for _ in 0..7 {
-                let pos = self.reader.stream_position().ok()?;
-                if pos >= self.data_offset + self.data_size {
-                    return None;
-                }
-
-                let header2_result = PerfEventHeader::read_from(self.reader);
-                if let Ok(h2) = header2_result {
-                    let valid_type2 = matches!(
-                        h2.type_,
-                        PERF_RECORD_MMAP
-                            | PERF_RECORD_LOST
-                            | PERF_RECORD_COMM
-                            | PERF_RECORD_EXIT
-                            | PERF_RECORD_THROTTLE
-                            | PERF_RECORD_UNTHROTTLE
-                            | PERF_RECORD_FORK
-                            | PERF_RECORD_READ
-                            | PERF_RECORD_SAMPLE
-                            | PERF_RECORD_MMAP2
-                            | PERF_RECORD_FINISHED_ROUND
-                    );
-                    if valid_type2 && h2.size >= 6 && h2.size <= 10000 {
-                        self.current_offset = self.reader.stream_position().ok()?;
-                        return self.process_event(h2);
-                    }
-                }
-                self.reader.seek(SeekFrom::Start(pos + 1)).ok()?;
-            }
+        // Sanity check: header size must be at least the header itself (8 bytes) and not too large
+        if header.size < PERF_EVENT_HEADER_SIZE || header.size > 10000 {
             return None;
         }
 
