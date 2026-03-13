@@ -20,13 +20,17 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
 }
 
 /// Convert Hardware event to PerfEventAttr for Linux perf format
-fn hardware_to_attr(event: Hardware, sample_period: u64) -> PerfEventAttr {
+fn hardware_to_attr(event: Hardware, sample_period: u64, callchain: bool) -> PerfEventAttr {
     let attr_type = 0u32;
     let config = u64::from(event);
-    let sample_type = crate::core::perf_data::PERF_SAMPLE_IP
+    let mut sample_type = crate::core::perf_data::PERF_SAMPLE_IP
         | crate::core::perf_data::PERF_SAMPLE_TID
         | crate::core::perf_data::PERF_SAMPLE_TIME
         | crate::core::perf_data::PERF_SAMPLE_PERIOD;
+
+    if callchain {
+        sample_type |= crate::core::perf_data::PERF_SAMPLE_CALLCHAIN;
+    }
 
     PerfEventAttr::new(attr_type, config, sample_type)
         .with_sample_period(sample_period)
@@ -137,6 +141,7 @@ pub fn execute(
     event: Option<&str>,
     frequency: Option<u64>,
     period: Option<u64>,
+    call_graph: Option<u16>,
     command: &[String],
 ) -> Result<()> {
     let is_system_wide = all_cpus || cpu.is_some();
@@ -202,15 +207,24 @@ pub fn execute(
             cpus
         };
 
-        record_system_wide(cpus, event, sample_period, output_path)
+        record_system_wide(cpus, event, sample_period, output_path, call_graph)
     } else if let Some(target_pid) = pid {
-        record_with_pid(target_pid, event, sample_period, output_path)
+        record_with_pid(target_pid, event, sample_period, output_path, call_graph)
     } else {
-        record_with_command(command, event, sample_period, output_path)
+        record_with_command(command, event, sample_period, output_path, call_graph)
     }
 }
 
-fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &str) -> Result<()> {
+fn record_with_pid(
+    pid: u32,
+    event: Hardware,
+    sample_period: u64,
+    output_path: &str,
+    call_graph: Option<u16>,
+) -> Result<()> {
+    let callchain = call_graph.is_some();
+    let max_stack = call_graph.unwrap_or(0);
+
     eprintln!("Recording process {} ...", pid);
 
     let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
@@ -218,6 +232,8 @@ fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &
         pid as i32,
         sample_period,
         false,
+        callchain,
+        max_stack,
     )
     .context("Failed to create ring buffer")?;
 
@@ -226,7 +242,8 @@ fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
-    let attr = hardware_to_attr(event, sample_period);
+    let attr = hardware_to_attr(event, sample_period, callchain);
+    let sample_type = attr.sample_type;
     let event_id = generate_event_id();
     writer
         .initialize(&[attr], &[vec![event_id]])
@@ -243,7 +260,7 @@ fn record_with_pid(pid: u32, event: Hardware, sample_period: u64, output_path: &
         }
 
         while let Some(record) = ringbuf.next_record() {
-            if let Some(sample) = parse_sample_record(&record, sample_period) {
+            if let Some(sample) = parse_sample_record(&record, sample_period, sample_type) {
                 writer
                     .write_sample(&sample)
                     .context("Failed to write sample")?;
@@ -280,7 +297,11 @@ fn record_with_command(
     event: Hardware,
     sample_period: u64,
     output_path: &str,
+    call_graph: Option<u16>,
 ) -> Result<()> {
+    let callchain = call_graph.is_some();
+    let max_stack = call_graph.unwrap_or(0);
+
     match unsafe { fork() }? {
         ForkResult::Parent { child } => {
             waitpid(child, Some(WaitPidFlag::WUNTRACED))
@@ -291,13 +312,16 @@ fn record_with_command(
                 child.as_raw(),
                 sample_period,
                 false,
+                callchain,
+                max_stack,
             )
             .context("Failed to create ring buffer")?;
 
             let mut writer = PerfDataWriter::from_path(output_path)
                 .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
-            let attr = hardware_to_attr(event, sample_period);
+            let attr = hardware_to_attr(event, sample_period, callchain);
+            let sample_type = attr.sample_type;
             let event_id = generate_event_id();
             writer
                 .initialize(&[attr], &[vec![event_id]])
@@ -327,7 +351,7 @@ fn record_with_command(
                 }
 
                 while let Some(record) = ringbuf.next_record() {
-                    if let Some(sample) = parse_sample_record(&record, sample_period) {
+                    if let Some(sample) = parse_sample_record(&record, sample_period, sample_type) {
                         writer
                             .write_sample(&sample)
                             .context("Failed to write sample")?;
@@ -395,7 +419,11 @@ fn process_exists(pid: u32) -> bool {
     std::path::Path::new(&format!("/proc/{}", pid)).exists()
 }
 
-fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> Option<SampleEvent> {
+fn parse_sample_record(
+    record: &perf_event::Record<'_>,
+    sample_period: u64,
+    sample_type: u64,
+) -> Option<SampleEvent> {
     use perf_event::data::Record as DataRecord;
 
     let parsed = record.parse_record().ok()?;
@@ -408,10 +436,7 @@ fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> O
             let time = sample.time().unwrap_or(0);
             let cpu = sample.cpu();
 
-            let sample_type = crate::core::perf_data::PERF_SAMPLE_IP
-                | crate::core::perf_data::PERF_SAMPLE_TID
-                | crate::core::perf_data::PERF_SAMPLE_TIME
-                | crate::core::perf_data::PERF_SAMPLE_PERIOD;
+            let callchain = sample.callchain().map(|cc| cc.to_vec());
 
             Some(SampleEvent::new(
                 sample_type,
@@ -420,7 +445,7 @@ fn parse_sample_record(record: &perf_event::Record<'_>, sample_period: u64) -> O
                 pid,
                 tid,
                 sample_period,
-                None,
+                callchain,
                 cpu,
             ))
         }
@@ -433,14 +458,24 @@ fn record_system_wide(
     event: Hardware,
     sample_period: u64,
     output_path: &str,
+    call_graph: Option<u16>,
 ) -> Result<()> {
+    let callchain = call_graph.is_some();
+    let max_stack = call_graph.unwrap_or(0);
+
     eprintln!("Recording on CPUs: {:?}", cpus);
 
     let mut ringbufs = Vec::with_capacity(cpus.len());
     for &cpu in &cpus {
-        let ringbuf =
-            crate::core::ringbuf::RingBuffer::from_event_for_cpu(event, cpu, sample_period, false)
-                .with_context(|| format!("Failed to create ring buffer for CPU {}", cpu))?;
+        let ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_cpu(
+            event,
+            cpu,
+            sample_period,
+            false,
+            callchain,
+            max_stack,
+        )
+        .with_context(|| format!("Failed to create ring buffer for CPU {}", cpu))?;
         ringbufs.push((cpu, ringbuf));
     }
 
@@ -453,7 +488,8 @@ fn record_system_wide(
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
-    let attr = hardware_to_attr(event, sample_period);
+    let attr = hardware_to_attr(event, sample_period, callchain);
+    let sample_type = attr.sample_type;
     let event_ids: Vec<u64> = cpus.iter().map(|_| generate_event_id()).collect();
 
     writer
@@ -471,7 +507,7 @@ fn record_system_wide(
     while !SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
         for (_cpu, ringbuf) in &mut ringbufs {
             while let Some(record) = ringbuf.next_record() {
-                if let Some(sample) = parse_sample_record(&record, sample_period) {
+                if let Some(sample) = parse_sample_record(&record, sample_period, sample_type) {
                     let process_key = (sample.pid, sample.tid);
                     if seen_processes.insert(process_key) {
                         if let Err(e) = write_process_events(&mut writer, sample.pid, sample.tid) {
@@ -538,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_execute_no_command() {
-        let result = execute(None, false, None, None, None, None, None, &[]);
+        let result = execute(None, false, None, None, None, None, None, None, &[]);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()

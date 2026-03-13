@@ -91,11 +91,12 @@ fn run_command(args: &Cli) -> Result<()> {
             event,
             frequency,
             period,
+            call_graph,
             command,
         } => {
             debug!(
-                "Executing record command: pid={:?}, all_cpus={}, cpu={:?}, output={:?}, event={:?}, frequency={:?}, period={:?}, command={:?}",
-                pid, all_cpus, cpu, output, event, frequency, period, command
+                "Executing record command: pid={:?}, all_cpus={}, cpu={:?}, output={:?}, event={:?}, frequency={:?}, period={:?}, call_graph={:?}, command={:?}",
+                pid, all_cpus, cpu, output, event, frequency, period, call_graph, command
             );
             commands::record::execute(
                 *pid,
@@ -105,6 +106,7 @@ fn run_command(args: &Cli) -> Result<()> {
                 event.as_deref(),
                 *frequency,
                 *period,
+                *call_graph,
                 command,
             )
             .context("Failed to record performance data")?;

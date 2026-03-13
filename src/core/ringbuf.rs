@@ -48,21 +48,31 @@ impl RingBuffer {
         pid: i32,
         sample_period: u64,
         inherit: bool,
+        callchain: bool,
+        max_stack: u16,
     ) -> Result<Self> {
         let config = RingBufferConfig::default();
 
-        let counter = Builder::new(event)
+        let builder = &mut Builder::new(event);
+        builder
             .observe_pid(pid)
             .any_cpu()
             .sample_period(sample_period)
             .inherit(inherit)
             .sample(SampleFlag::IP)
             .sample(SampleFlag::TID)
-            .sample(SampleFlag::TIME)
-            .build()
-            .map_err(|e| PerfError::CounterSetup {
-                source: Box::new(e),
-            })?;
+            .sample(SampleFlag::TIME);
+
+        if callchain {
+            builder.sample(SampleFlag::CALLCHAIN);
+            if max_stack > 0 {
+                builder.sample_max_stack(max_stack);
+            }
+        }
+
+        let counter = builder.build().map_err(|e| PerfError::CounterSetup {
+            source: Box::new(e),
+        })?;
 
         Self::new(counter, config)
     }
@@ -78,6 +88,8 @@ impl RingBuffer {
     /// * `cpu` - The CPU ID to monitor
     /// * `sample_period` - The number of events between samples
     /// * `enable_on_exec` - Whether to enable the counter on exec (typically false for CPU-wide)
+    /// * `callchain` - Whether to enable callchain (stack trace) recording
+    /// * `max_stack` - Maximum number of stack frames to record (0 for default)
     ///
     /// # Returns
     ///
@@ -94,6 +106,8 @@ impl RingBuffer {
     ///     0,  // CPU 0
     ///     100000,  // sample period
     ///     false,  // enable_on_exec
+    ///     false,  // callchain
+    ///     0,      // max_stack
     /// )?;
     /// # Ok::<(), perf_rs::error::PerfError>(())
     /// ```
@@ -102,11 +116,13 @@ impl RingBuffer {
         cpu: u32,
         sample_period: u64,
         enable_on_exec: bool,
+        callchain: bool,
+        max_stack: u16,
     ) -> Result<Self> {
         let config = RingBufferConfig::default();
 
-        // pid = -1 means monitor all processes on the specified CPU
-        let counter = Builder::new(event)
+        let builder = &mut Builder::new(event);
+        builder
             .observe_pid(-1)
             .one_cpu(cpu as usize)
             .sample_period(sample_period)
@@ -114,11 +130,18 @@ impl RingBuffer {
             .sample(SampleFlag::IP)
             .sample(SampleFlag::TID)
             .sample(SampleFlag::TIME)
-            .sample(SampleFlag::CPU)
-            .build()
-            .map_err(|e| PerfError::CounterSetup {
-                source: Box::new(e),
-            })?;
+            .sample(SampleFlag::CPU);
+
+        if callchain {
+            builder.sample(SampleFlag::CALLCHAIN);
+            if max_stack > 0 {
+                builder.sample_max_stack(max_stack);
+            }
+        }
+
+        let counter = builder.build().map_err(|e| PerfError::CounterSetup {
+            source: Box::new(e),
+        })?;
 
         Self::new(counter, config)
     }
@@ -178,7 +201,8 @@ mod tests {
             return;
         }
 
-        let result = RingBuffer::from_event_for_cpu(Hardware::CPU_CYCLES, 0, 100000, false);
+        let result =
+            RingBuffer::from_event_for_cpu(Hardware::CPU_CYCLES, 0, 100000, false, false, 0);
 
         assert!(
             result.is_ok(),
@@ -194,14 +218,16 @@ mod tests {
             return;
         }
 
-        let result = RingBuffer::from_event_for_cpu(Hardware::INSTRUCTIONS, 0, 50000, false);
+        let result =
+            RingBuffer::from_event_for_cpu(Hardware::INSTRUCTIONS, 0, 50000, false, false, 0);
         assert!(
             result.is_ok(),
             "Failed to create ring buffer for CPU 0: {:?}",
             result.err()
         );
 
-        let result = RingBuffer::from_event_for_cpu(Hardware::INSTRUCTIONS, 1, 50000, false);
+        let result =
+            RingBuffer::from_event_for_cpu(Hardware::INSTRUCTIONS, 1, 50000, false, false, 0);
         if result.is_err() {
             eprintln!("CPU 1 test skipped (likely single-CPU system)");
         }
@@ -214,8 +240,9 @@ mod tests {
             return;
         }
 
-        let mut ringbuf = RingBuffer::from_event_for_cpu(Hardware::CPU_CYCLES, 0, 100000, false)
-            .expect("Failed to create ring buffer");
+        let mut ringbuf =
+            RingBuffer::from_event_for_cpu(Hardware::CPU_CYCLES, 0, 100000, false, false, 0)
+                .expect("Failed to create ring buffer");
 
         assert!(ringbuf.enable().is_ok(), "Failed to enable ring buffer");
         assert!(ringbuf.disable().is_ok(), "Failed to disable ring buffer");

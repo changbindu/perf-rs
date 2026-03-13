@@ -101,6 +101,18 @@ pub enum Commands {
         #[arg(short = 'P', long, value_name = "N", conflicts_with = "frequency")]
         period: Option<u64>,
 
+        /// Enable call graph (stack trace) recording
+        ///
+        /// When enabled, each sample will include a stack trace showing
+        /// the function call chain leading to the sampled instruction.
+        /// Use an optional value to specify the maximum stack depth (default: 127).
+        ///
+        /// Examples:
+        ///   -g           # Enable callgraph with default depth
+        ///   -g 50        # Enable callgraph with max 50 frames
+        #[arg(short = 'g', long, num_args = 0..=1, default_missing_value = "127")]
+        call_graph: Option<u16>,
+
         /// Command to execute (mutually exclusive with --pid)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
