@@ -1,6 +1,5 @@
 //! ELF symbol resolver using object, gimli, and addr2line crates.
 
-use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 
@@ -11,10 +10,19 @@ use crate::error::{PerfError, Result};
 
 use super::{SymbolInfo, SymbolResolver};
 
+/// Symbol entry for sorted storage.
+#[derive(Debug, Clone)]
+struct SymbolEntry {
+    start_addr: u64,
+    end_addr: u64,
+    name: String,
+    size: u64,
+}
+
 /// ELF symbol resolver that parses both ELF symbols and DWARF debug info.
 pub struct ElfResolver {
-    /// Symbol table indexed by start address.
-    symbols: HashMap<u64, SymbolInfo>,
+    /// Symbols sorted by start address for O(log n) lookups.
+    symbols: Vec<SymbolEntry>,
     /// DWARF context for address-to-line resolution.
     dwarf_context: Option<Context<gimli::EndianRcSlice<gimli::RunTimeEndian>>>,
     /// Path to the loaded ELF file.
@@ -25,7 +33,7 @@ impl ElfResolver {
     /// Create a new ELF resolver.
     pub fn new() -> Self {
         Self {
-            symbols: HashMap::new(),
+            symbols: Vec::new(),
             dwarf_context: None,
             loaded_path: None,
         }
@@ -58,6 +66,8 @@ impl ElfResolver {
 
     /// Load symbols from the ELF symbol table.
     fn load_elf_symbols(&mut self, object: &addr2line::object::File<'_>) {
+        let mut entries: Vec<SymbolEntry> = Vec::new();
+
         for symbol in object.symbols() {
             let name = symbol.name().unwrap_or("");
             if name.is_empty() {
@@ -75,8 +85,14 @@ impl ElfResolver {
                 continue;
             }
 
-            let info = SymbolInfo::new(name.to_string(), addr, size);
-            self.symbols.insert(addr, info);
+            let end_addr = if size > 0 { addr + size } else { addr + 1 };
+
+            entries.push(SymbolEntry {
+                start_addr: addr,
+                end_addr,
+                name: name.to_string(),
+                size,
+            });
         }
 
         for symbol in object.dynamic_symbols() {
@@ -96,10 +112,22 @@ impl ElfResolver {
                 continue;
             }
 
-            self.symbols
-                .entry(addr)
-                .or_insert_with(|| SymbolInfo::new(name.to_string(), addr, size));
+            let end_addr = if size > 0 { addr + size } else { addr + 1 };
+
+            // Only add if not already present
+            if !entries.iter().any(|e| e.start_addr == addr) {
+                entries.push(SymbolEntry {
+                    start_addr: addr,
+                    end_addr,
+                    name: name.to_string(),
+                    size,
+                });
+            }
         }
+
+        // Sort by start address for binary search
+        entries.sort_by_key(|e| e.start_addr);
+        self.symbols = entries;
     }
 
     /// Load DWARF debug context.
@@ -128,9 +156,27 @@ impl ElfResolver {
         }
     }
 
-    /// Find symbol containing the given address.
-    fn find_symbol_containing(&self, addr: u64) -> Option<&SymbolInfo> {
-        self.symbols.values().find(|sym| sym.contains(addr))
+    /// Find symbol containing the given address using binary search.
+    fn find_symbol_containing(&self, addr: u64) -> Option<SymbolInfo> {
+        // Binary search for the largest start_addr <= addr
+        let idx = self.symbols.partition_point(|e| e.start_addr <= addr);
+
+        if idx == 0 {
+            return None;
+        }
+
+        let entry = &self.symbols[idx - 1];
+
+        // Check if address falls within the symbol's range
+        if addr >= entry.start_addr && addr < entry.end_addr {
+            return Some(SymbolInfo::new(
+                entry.name.clone(),
+                entry.start_addr,
+                entry.size,
+            ));
+        }
+
+        None
     }
 }
 
@@ -142,14 +188,21 @@ impl Default for ElfResolver {
 
 impl SymbolResolver for ElfResolver {
     fn resolve(&self, addr: u64) -> Result<Option<SymbolInfo>> {
-        if let Some(mut info) = self.symbols.get(&addr).cloned() {
-            if let Some((file, line)) = self.resolve_dwarf_location(addr) {
-                info = info.with_source(file, line);
+        // Try exact match first via binary search
+        let exact_idx = self.symbols.partition_point(|e| e.start_addr < addr);
+
+        if let Some(entry) = self.symbols.get(exact_idx) {
+            if entry.start_addr == addr {
+                let mut info = SymbolInfo::new(entry.name.clone(), entry.start_addr, entry.size);
+                if let Some((file, line)) = self.resolve_dwarf_location(addr) {
+                    info = info.with_source(file, line);
+                }
+                return Ok(Some(info));
             }
-            return Ok(Some(info));
         }
 
-        if let Some(mut info) = self.find_symbol_containing(addr).cloned() {
+        // Fall back to finding symbol containing the address
+        if let Some(mut info) = self.find_symbol_containing(addr) {
             if let Some((file, line)) = self.resolve_dwarf_location(addr) {
                 info = info.with_source(file, line);
             }
@@ -185,9 +238,12 @@ mod tests {
     #[test]
     fn test_elf_resolver_clear() {
         let mut resolver = ElfResolver::new();
-        resolver
-            .symbols
-            .insert(0x1000, SymbolInfo::new("test".to_string(), 0x1000, 0x100));
+        resolver.symbols.push(SymbolEntry {
+            start_addr: 0x1000,
+            end_addr: 0x1100,
+            name: "test".to_string(),
+            size: 0x100,
+        });
         resolver.loaded_path = Some(PathBuf::from("/test"));
 
         resolver.clear();
@@ -205,12 +261,18 @@ mod tests {
     #[test]
     fn test_find_symbol_containing() {
         let mut resolver = ElfResolver::new();
-        resolver
-            .symbols
-            .insert(0x1000, SymbolInfo::new("func1".to_string(), 0x1000, 0x100));
-        resolver
-            .symbols
-            .insert(0x2000, SymbolInfo::new("func2".to_string(), 0x2000, 0x200));
+        resolver.symbols.push(SymbolEntry {
+            start_addr: 0x1000,
+            end_addr: 0x1100,
+            name: "func1".to_string(),
+            size: 0x100,
+        });
+        resolver.symbols.push(SymbolEntry {
+            start_addr: 0x2000,
+            end_addr: 0x2200,
+            name: "func2".to_string(),
+            size: 0x200,
+        });
 
         let sym = resolver.find_symbol_containing(0x1000);
         assert!(sym.is_some());

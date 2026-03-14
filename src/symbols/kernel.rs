@@ -13,6 +13,8 @@ use super::{SymbolInfo, SymbolResolver};
 pub struct KernelResolver {
     /// Symbol table indexed by start address.
     symbols: HashMap<u64, String>,
+    /// Sorted addresses for O(log n) binary search lookups.
+    sorted_addrs: Vec<u64>,
     /// Whether symbols are loaded.
     loaded: bool,
 }
@@ -22,6 +24,7 @@ impl KernelResolver {
     pub fn new() -> Self {
         Self {
             symbols: HashMap::new(),
+            sorted_addrs: Vec::new(),
             loaded: false,
         }
     }
@@ -81,30 +84,30 @@ impl KernelResolver {
             });
         }
 
+        // Build sorted address vector for O(log n) lookups
+        self.sorted_addrs = self.symbols.keys().copied().collect();
+        self.sorted_addrs.sort_unstable();
+
         self.loaded = true;
         Ok(())
     }
 
     /// Find the symbol that contains the given address.
     ///
-    /// Uses binary search on sorted symbol addresses.
+    /// Uses binary search on pre-sorted symbol addresses.
     fn find_symbol_containing(&self, addr: u64) -> Option<(u64, &str)> {
-        if self.symbols.is_empty() {
+        if self.sorted_addrs.is_empty() {
             return None;
         }
 
-        // Collect and sort addresses for binary search
-        let mut addrs: Vec<u64> = self.symbols.keys().copied().collect();
-        addrs.sort_unstable();
-
         // Binary search for the largest address <= target
-        let idx = addrs.partition_point(|&a| a <= addr);
+        let idx = self.sorted_addrs.partition_point(|&a| a <= addr);
 
         if idx == 0 {
             return None;
         }
 
-        let sym_addr = addrs[idx - 1];
+        let sym_addr = self.sorted_addrs[idx - 1];
         let sym_name = self.symbols.get(&sym_addr)?;
 
         Some((sym_addr, sym_name))
@@ -135,6 +138,7 @@ impl SymbolResolver for KernelResolver {
 
     fn clear(&mut self) {
         self.symbols.clear();
+        self.sorted_addrs.clear();
         self.loaded = false;
     }
 }
@@ -166,6 +170,7 @@ mod tests {
         resolver.symbols.insert(0x1000, "sym1".to_string());
         resolver.symbols.insert(0x2000, "sym2".to_string());
         resolver.symbols.insert(0x3000, "sym3".to_string());
+        resolver.sorted_addrs = vec![0x1000, 0x2000, 0x3000];
 
         // Exact match
         let result = resolver.find_symbol_containing(0x1000);
