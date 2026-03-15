@@ -127,6 +127,17 @@ fn get_software_events() -> Vec<EventInfo> {
     ]
 }
 
+/// Get raw event format description
+fn get_raw_event_info() -> EventInfo {
+    EventInfo {
+        name: "rNNNN".to_string(),
+        aliases: vec!["RNNNN".to_string()],
+        category: "Raw event".to_string(),
+        description: "Raw CPU-specific event by hex config value".to_string(),
+        detailed_description: "Raw CPU-specific event. NNNN is a hexadecimal config value (e.g., r1a8 for Intel RETIRED_UOP_TYPES). Use r0xNNNN format for 0x prefix. Consult CPU documentation for event codes.".to_string(),
+    }
+}
+
 /// Format an event for display
 fn format_event(event: &EventInfo, detailed: bool) -> String {
     let mut line = format!("  {:<40}", event.name);
@@ -179,6 +190,7 @@ pub fn execute(filter: Option<&str>, detailed: bool, no_pager: bool) -> Result<(
 
     events.extend(get_hardware_events());
     events.extend(get_software_events());
+    events.push(get_raw_event_info());
 
     let filtered_events: Vec<_> = if let Some(filter_str) = filter {
         events
@@ -213,6 +225,10 @@ pub fn execute(filter: Option<&str>, detailed: bool, no_pager: bool) -> Result<(
         .iter()
         .filter(|e| e.category == "Software event")
         .collect();
+    let raw_events: Vec<_> = filtered_events
+        .iter()
+        .filter(|e| e.category == "Raw event")
+        .collect();
 
     hardware_events.sort_by_key(|e| e.name.clone());
     software_events.sort_by_key(|e| e.name.clone());
@@ -227,6 +243,13 @@ pub fn execute(filter: Option<&str>, detailed: bool, no_pager: bool) -> Result<(
     if !software_events.is_empty() {
         writeln!(output, "\nList of software events:")?;
         for event in software_events {
+            writeln!(output, "{}", format_event(event, detailed))?;
+        }
+    }
+
+    if !raw_events.is_empty() {
+        writeln!(output, "\nList of raw events:")?;
+        for event in raw_events {
             writeln!(output, "{}", format_event(event, detailed))?;
         }
     }
@@ -255,6 +278,14 @@ mod tests {
         assert!(!events.is_empty());
         assert!(events.iter().any(|e| e.name == "cpu-clock"));
         assert!(events.iter().any(|e| e.name == "page-faults"));
+    }
+
+    #[test]
+    fn test_get_raw_event_info() {
+        let event = get_raw_event_info();
+        assert_eq!(event.name, "rNNNN");
+        assert!(event.aliases.contains(&"RNNNN".to_string()));
+        assert_eq!(event.category, "Raw event");
     }
 
     #[test]
