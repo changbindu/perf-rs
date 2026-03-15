@@ -100,7 +100,7 @@ pub fn read_counter(counter: &mut Counter, event_name: &str) -> Result<u64> {
     })
 }
 
-pub use perf_event::events::Hardware;
+pub use perf_event::events::{Hardware, Software};
 
 #[cfg(test)]
 mod tests {

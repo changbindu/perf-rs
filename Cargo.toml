@@ -10,7 +10,7 @@ name = "perf_rs"
 path = "src/lib.rs"
 
 [dependencies]
-perf-event2 = "0.7"
+perf-event2 = { version = "0.7", features = ["hooks"] }
 clap = { version = "4", features = ["derive"] }
 thiserror = "1"
 anyhow = "1"

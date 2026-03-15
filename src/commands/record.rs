@@ -2,9 +2,9 @@
 
 use crate::core::cpu::{get_online_cpus, parse_cpu_list, validate_cpu_ids};
 use crate::core::perf_data::{CommEvent, MmapEvent, PerfDataWriter, PerfEventAttr, SampleEvent};
-use crate::core::perf_event::Hardware;
 use crate::core::privilege::check_privilege;
 use crate::error::PerfError;
+use crate::events::{parse_event, Hardware, PerfEvent};
 use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -19,10 +19,18 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
 }
 
-/// Convert Hardware event to PerfEventAttr for Linux perf format
-fn hardware_to_attr(event: Hardware, sample_period: u64, callchain: bool) -> PerfEventAttr {
-    let attr_type = 0u32;
-    let config = u64::from(event);
+/// Convert a PerfEvent to PerfEventAttr for Linux perf format
+fn event_to_attr(event: &PerfEvent, sample_period: u64, callchain: bool) -> PerfEventAttr {
+    let (attr_type, config) = match event {
+        PerfEvent::Hardware(h) => (0u32, u64::from(*h)),
+        PerfEvent::Software(s) => (1u32, u64::from(*s)),
+        PerfEvent::Cache(c) => {
+            let config =
+                c.which.0 as u64 | ((c.operation.0 as u64) << 8) | ((c.result.0 as u64) << 16);
+            (3u32, config)
+        }
+    };
+
     let mut sample_type = crate::core::perf_data::PERF_SAMPLE_IP
         | crate::core::perf_data::PERF_SAMPLE_TID
         | crate::core::perf_data::PERF_SAMPLE_TIME
@@ -99,24 +107,6 @@ fn write_process_events(
     Ok(())
 }
 
-fn parse_event(name: &str) -> Result<Hardware> {
-    match name.trim().to_lowercase().as_str() {
-        "cpu-cycles" | "cycles" => Ok(Hardware::CPU_CYCLES),
-        "instructions" | "instructions-retired" => Ok(Hardware::INSTRUCTIONS),
-        "cache-references" => Ok(Hardware::CACHE_REFERENCES),
-        "cache-misses" => Ok(Hardware::CACHE_MISSES),
-        "branch-instructions" | "branches" => Ok(Hardware::BRANCH_INSTRUCTIONS),
-        "branch-misses" => Ok(Hardware::BRANCH_MISSES),
-        "stalled-cycles-frontend" | "idle-cycles-frontend" => Ok(Hardware::STALLED_CYCLES_FRONTEND),
-        "stalled-cycles-backend" | "idle-cycles-backend" => Ok(Hardware::STALLED_CYCLES_BACKEND),
-        "ref-cpu-cycles" | "cpu-cycles-ref" => Ok(Hardware::REF_CPU_CYCLES),
-        _ => Err(anyhow::anyhow!(
-            "Unknown event: '{}'. Supported events: cpu-cycles, instructions, cache-references, cache-misses, branch-instructions, branch-misses",
-            name
-        )),
-    }
-}
-
 fn setup_signal_handlers() -> Result<()> {
     let sig_action = nix::sys::signal::SigHandler::Handler(signal_handler);
     let flags = nix::sys::signal::SaFlags::empty();
@@ -180,7 +170,7 @@ pub fn execute(
     let event = if let Some(event_str) = event {
         parse_event(event_str)?
     } else {
-        Hardware::CPU_CYCLES
+        PerfEvent::Hardware(Hardware::CPU_CYCLES)
     };
 
     let sample_period = if let Some(freq) = frequency {
@@ -217,7 +207,7 @@ pub fn execute(
 
 fn record_with_pid(
     pid: u32,
-    event: Hardware,
+    event: PerfEvent,
     sample_period: u64,
     output_path: &str,
     call_graph: Option<u16>,
@@ -226,6 +216,9 @@ fn record_with_pid(
     let max_stack = call_graph.unwrap_or(0);
 
     eprintln!("Recording process {} ...", pid);
+
+    let attr = event_to_attr(&event, sample_period, callchain);
+    let sample_type = attr.sample_type;
 
     let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
         event,
@@ -242,8 +235,6 @@ fn record_with_pid(
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
-    let attr = hardware_to_attr(event, sample_period, callchain);
-    let sample_type = attr.sample_type;
     let event_id = generate_event_id();
     writer
         .initialize(&[attr], &[vec![event_id]])
@@ -294,7 +285,7 @@ fn record_with_pid(
 
 fn record_with_command(
     command: &[String],
-    event: Hardware,
+    event: PerfEvent,
     sample_period: u64,
     output_path: &str,
     call_graph: Option<u16>,
@@ -306,6 +297,9 @@ fn record_with_command(
         ForkResult::Parent { child } => {
             waitpid(child, Some(WaitPidFlag::WUNTRACED))
                 .context("Failed to wait for child to stop")?;
+
+            let attr = event_to_attr(&event, sample_period, callchain);
+            let sample_type = attr.sample_type;
 
             let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
                 event,
@@ -320,8 +314,6 @@ fn record_with_command(
             let mut writer = PerfDataWriter::from_path(output_path)
                 .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
-            let attr = hardware_to_attr(event, sample_period, callchain);
-            let sample_type = attr.sample_type;
             let event_id = generate_event_id();
             writer
                 .initialize(&[attr], &[vec![event_id]])
@@ -455,7 +447,7 @@ fn parse_sample_record(
 
 fn record_system_wide(
     cpus: Vec<u32>,
-    event: Hardware,
+    event: PerfEvent,
     sample_period: u64,
     output_path: &str,
     call_graph: Option<u16>,
@@ -465,10 +457,13 @@ fn record_system_wide(
 
     eprintln!("Recording on CPUs: {:?}", cpus);
 
+    let attr = event_to_attr(&event, sample_period, callchain);
+    let sample_type = attr.sample_type;
+
     let mut ringbufs = Vec::with_capacity(cpus.len());
     for &cpu in &cpus {
         let ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_cpu(
-            event,
+            event.clone(),
             cpu,
             sample_period,
             false,
@@ -488,8 +483,6 @@ fn record_system_wide(
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
-    let attr = hardware_to_attr(event, sample_period, callchain);
-    let sample_type = attr.sample_type;
     let event_ids: Vec<u64> = cpus.iter().map(|_| generate_event_id()).collect();
 
     writer
@@ -561,14 +554,19 @@ mod tests {
     fn test_parse_event() {
         assert!(matches!(
             parse_event("cpu-cycles"),
-            Ok(Hardware::CPU_CYCLES)
+            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
         ));
-        assert!(matches!(parse_event("cycles"), Ok(Hardware::CPU_CYCLES)));
+        assert!(matches!(
+            parse_event("cycles"),
+            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
+        ));
         assert!(matches!(
             parse_event("instructions"),
-            Ok(Hardware::INSTRUCTIONS)
+            Ok(PerfEvent::Hardware(Hardware::INSTRUCTIONS))
         ));
         assert!(parse_event("cache-misses").is_ok());
+        assert!(parse_event("cpu-clock").is_ok());
+        assert!(parse_event("L1-dcache-loads").is_ok());
         assert!(parse_event("unknown").is_err());
     }
 

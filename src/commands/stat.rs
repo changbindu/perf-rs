@@ -2,42 +2,15 @@
 
 use crate::core::cpu::{get_online_cpus, parse_cpu_list, validate_cpu_ids};
 use crate::core::perf_event::{
-    create_counter, disable_counter, enable_counter, read_counter, Hardware, PerfConfig,
+    create_counter, disable_counter, enable_counter, read_counter, PerfConfig,
 };
 use crate::core::privilege::check_privilege;
 use crate::error::PerfError;
+use crate::events::{format_event_name, parse_event, parse_events, Hardware, PerfEvent, Software};
 use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{execvp, fork, ForkResult, Pid};
-
-/// Parse event name string to Hardware enum.
-fn parse_event(name: &str) -> Result<Hardware> {
-    match name.trim().to_lowercase().as_str() {
-        "cpu-cycles" | "cycles" => Ok(Hardware::CPU_CYCLES),
-        "instructions" | "instructions-retired" => Ok(Hardware::INSTRUCTIONS),
-        "cache-references" => Ok(Hardware::CACHE_REFERENCES),
-        "cache-misses" => Ok(Hardware::CACHE_MISSES),
-        "branch-instructions" | "branches" => Ok(Hardware::BRANCH_INSTRUCTIONS),
-        "branch-misses" => Ok(Hardware::BRANCH_MISSES),
-        "stalled-cycles-frontend" | "idle-cycles-frontend" => Ok(Hardware::STALLED_CYCLES_FRONTEND),
-        "stalled-cycles-backend" | "idle-cycles-backend" => Ok(Hardware::STALLED_CYCLES_BACKEND),
-        "ref-cpu-cycles" | "cpu-cycles-ref" => Ok(Hardware::REF_CPU_CYCLES),
-        _ => Err(anyhow::anyhow!(
-            "Unknown event: '{}'. Supported events: cpu-cycles, instructions, cache-references, cache-misses, branch-instructions, branch-misses",
-            name
-        )),
-    }
-}
-
-/// Parse comma-separated event string into vector of Hardware events.
-fn parse_events(events_str: &str) -> Result<Vec<Hardware>> {
-    let events: Result<Vec<Hardware>> = events_str
-        .split(',')
-        .map(|s| parse_event(s.trim()))
-        .collect();
-    events
-}
 
 /// Execute the stat command.
 pub fn execute(
@@ -84,7 +57,10 @@ pub fn execute(
     let events = if let Some(events_str) = event {
         parse_events(events_str)?
     } else {
-        vec![Hardware::CPU_CYCLES, Hardware::INSTRUCTIONS]
+        vec![
+            PerfEvent::Hardware(Hardware::CPU_CYCLES),
+            PerfEvent::Hardware(Hardware::INSTRUCTIONS),
+        ]
     };
 
     if events.is_empty() {
@@ -129,13 +105,13 @@ pub fn execute(
 }
 
 /// Attach to a running process and monitor its performance counters.
-fn run_with_pid(pid: u32, events: &[Hardware]) -> Result<()> {
+fn run_with_pid(pid: u32, events: &[PerfEvent]) -> Result<()> {
     let config = PerfConfig::new().with_pid(pid).with_inherit(true);
 
     let mut counters: Vec<(String, perf_event::Counter)> = Vec::new();
 
     for event in events {
-        let counter = create_counter(*event, &config)
+        let counter = create_counter(event.clone(), &config)
             .with_context(|| format!("Failed to create {:?} counter", event))?;
         counters.push((format_event_name(event), counter));
     }
@@ -168,24 +144,8 @@ fn run_with_pid(pid: u32, events: &[Hardware]) -> Result<()> {
     Ok(())
 }
 
-/// Format a Hardware event enum to a human-readable name.
-fn format_event_name(event: &Hardware) -> String {
-    match *event {
-        Hardware::CPU_CYCLES => "cpu-cycles".to_string(),
-        Hardware::INSTRUCTIONS => "instructions".to_string(),
-        Hardware::CACHE_REFERENCES => "cache-references".to_string(),
-        Hardware::CACHE_MISSES => "cache-misses".to_string(),
-        Hardware::BRANCH_INSTRUCTIONS => "branch-instructions".to_string(),
-        Hardware::BRANCH_MISSES => "branch-misses".to_string(),
-        Hardware::STALLED_CYCLES_FRONTEND => "stalled-cycles-frontend".to_string(),
-        Hardware::STALLED_CYCLES_BACKEND => "stalled-cycles-backend".to_string(),
-        Hardware::REF_CPU_CYCLES => "ref-cpu-cycles".to_string(),
-        _ => format!("hardware-event-{:?}", event),
-    }
-}
-
 /// Run a command with performance counters.
-fn run_with_counters(command: &[String], events: &[Hardware]) -> Result<()> {
+fn run_with_counters(command: &[String], events: &[PerfEvent]) -> Result<()> {
     match unsafe { fork() }? {
         ForkResult::Parent { child } => {
             waitpid(child, Some(WaitPidFlag::WUNTRACED))
@@ -198,7 +158,7 @@ fn run_with_counters(command: &[String], events: &[Hardware]) -> Result<()> {
             let mut counters: Vec<(String, perf_event::Counter)> = Vec::new();
 
             for event in events {
-                let counter = create_counter(*event, &config)
+                let counter = create_counter(event.clone(), &config)
                     .with_context(|| format!("Failed to create {:?} counter", event))?;
                 counters.push((format_event_name(event), counter));
             }
@@ -258,13 +218,13 @@ struct CpuCounter {
     counter: perf_event::Counter,
 }
 
-fn create_per_cpu_counters(cpus: &[u32], events: &[Hardware]) -> Result<Vec<CpuCounter>> {
+fn create_per_cpu_counters(cpus: &[u32], events: &[PerfEvent]) -> Result<Vec<CpuCounter>> {
     let mut counters = Vec::new();
 
     for &cpu in cpus {
         for event in events {
             let config = PerfConfig::new().with_cpu(cpu);
-            match create_counter(*event, &config) {
+            match create_counter(event.clone(), &config) {
                 Ok(counter) => {
                     counters.push(CpuCounter {
                         cpu,
@@ -412,7 +372,7 @@ fn display_per_cpu_results(values: &[(u32, String, u64)], command: &[String], st
     }
 }
 
-fn run_system_wide_standalone(cpus: &[u32], events: &[Hardware], per_cpu: bool) -> Result<()> {
+fn run_system_wide_standalone(cpus: &[u32], events: &[PerfEvent], per_cpu: bool) -> Result<()> {
     let mut counters = create_per_cpu_counters(cpus, events)?;
 
     eprintln!(
@@ -451,7 +411,7 @@ fn run_system_wide_standalone(cpus: &[u32], events: &[Hardware], per_cpu: bool) 
 
 fn run_system_wide_with_counters(
     cpus: &[u32],
-    events: &[Hardware],
+    events: &[PerfEvent],
     command: &[String],
     per_cpu: bool,
 ) -> Result<()> {
@@ -597,16 +557,27 @@ mod tests {
     fn test_parse_event() {
         assert!(matches!(
             parse_event("cpu-cycles"),
-            Ok(Hardware::CPU_CYCLES)
+            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
         ));
-        assert!(matches!(parse_event("cycles"), Ok(Hardware::CPU_CYCLES)));
+        assert!(matches!(
+            parse_event("cycles"),
+            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
+        ));
         assert!(matches!(
             parse_event("instructions"),
-            Ok(Hardware::INSTRUCTIONS)
+            Ok(PerfEvent::Hardware(Hardware::INSTRUCTIONS))
         ));
         assert!(matches!(
             parse_event("cache-misses"),
-            Ok(Hardware::CACHE_MISSES)
+            Ok(PerfEvent::Hardware(Hardware::CACHE_MISSES))
+        ));
+        assert!(matches!(
+            parse_event("cpu-clock"),
+            Ok(PerfEvent::Software(Software::CPU_CLOCK))
+        ));
+        assert!(matches!(
+            parse_event("page-faults"),
+            Ok(PerfEvent::Software(Software::PAGE_FAULTS))
         ));
         assert!(parse_event("unknown").is_err());
     }
@@ -615,15 +586,34 @@ mod tests {
     fn test_parse_events() {
         let events = parse_events("cpu-cycles,instructions").unwrap();
         assert_eq!(events.len(), 2);
-        assert!(matches!(events[0], Hardware::CPU_CYCLES));
-        assert!(matches!(events[1], Hardware::INSTRUCTIONS));
+        assert!(matches!(
+            events[0],
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
+        ));
+        assert!(matches!(
+            events[1],
+            PerfEvent::Hardware(Hardware::INSTRUCTIONS)
+        ));
     }
 
     #[test]
     fn test_format_event_name() {
-        assert_eq!(format_event_name(&Hardware::CPU_CYCLES), "cpu-cycles");
-        assert_eq!(format_event_name(&Hardware::INSTRUCTIONS), "instructions");
-        assert_eq!(format_event_name(&Hardware::CACHE_MISSES), "cache-misses");
+        assert_eq!(
+            format_event_name(&PerfEvent::Hardware(Hardware::CPU_CYCLES)),
+            "cpu-cycles"
+        );
+        assert_eq!(
+            format_event_name(&PerfEvent::Hardware(Hardware::INSTRUCTIONS)),
+            "instructions"
+        );
+        assert_eq!(
+            format_event_name(&PerfEvent::Hardware(Hardware::CACHE_MISSES)),
+            "cache-misses"
+        );
+        assert_eq!(
+            format_event_name(&PerfEvent::Software(Software::CPU_CLOCK)),
+            "cpu-clock"
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@ mod cli;
 mod commands;
 mod core;
 mod error;
+mod events;
 mod pager;
 mod symbols;
 
