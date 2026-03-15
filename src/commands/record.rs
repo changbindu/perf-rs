@@ -29,6 +29,7 @@ fn event_to_attr(event: &PerfEvent, sample_period: u64, callchain: bool) -> Perf
                 c.which.0 as u64 | ((c.operation.0 as u64) << 8) | ((c.result.0 as u64) << 16);
             (3u32, config)
         }
+        PerfEvent::Raw(r) => (4u32, r.config),
     };
 
     let mut sample_type = crate::core::perf_data::PERF_SAMPLE_IP

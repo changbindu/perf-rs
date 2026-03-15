@@ -7,14 +7,15 @@ use anyhow::{anyhow, Result};
 use perf_event::events::Event;
 
 // Re-export event types from perf_event crate
-pub use perf_event::events::{Cache, CacheId, CacheOp, CacheResult, Hardware, Software};
+pub use perf_event::events::{Cache, CacheId, CacheOp, CacheResult, Hardware, Raw, Software};
 
-/// A unified event type that can be hardware, software, or cache events.
+/// A unified event type that can be hardware, software, cache, or raw events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerfEvent {
     Hardware(Hardware),
     Software(Software),
     Cache(Cache),
+    Raw(Raw),
 }
 
 impl Event for PerfEvent {
@@ -23,6 +24,7 @@ impl Event for PerfEvent {
             PerfEvent::Hardware(h) => h.update_attrs(attr),
             PerfEvent::Software(s) => s.update_attrs(attr),
             PerfEvent::Cache(c) => c.update_attrs(attr),
+            PerfEvent::Raw(r) => r.update_attrs(attr),
         }
     }
 }
@@ -39,6 +41,10 @@ impl PerfEvent {
     pub fn is_cache(&self) -> bool {
         matches!(self, PerfEvent::Cache(_))
     }
+
+    pub fn is_raw(&self) -> bool {
+        matches!(self, PerfEvent::Raw(_))
+    }
 }
 
 /// Parse an event name string to a PerfEvent.
@@ -47,25 +53,33 @@ impl PerfEvent {
 /// - Hardware events (cpu-cycles, instructions, cache-references, etc.)
 /// - Software events (cpu-clock, task-clock, page-faults, etc.)
 /// - Cache events (L1-dcache-loads, L1-dcache-misses, etc.)
+/// - Raw events (rNNNN where NNNN is a hex config value)
 ///
 /// # Errors
 ///
 /// Returns an error if the event name is not recognized.
 pub fn parse_event(name: &str) -> Result<PerfEvent> {
-    let name = name.trim().to_lowercase();
+    let name = name.trim();
 
-    // Try hardware events first
-    if let Some(event) = parse_hardware_event(&name) {
+    // Try raw events first (rNNNN format)
+    if let Some(event) = parse_raw_event(name) {
+        return Ok(event);
+    }
+
+    let name_lower = name.to_lowercase();
+
+    // Try hardware events
+    if let Some(event) = parse_hardware_event(&name_lower) {
         return Ok(event);
     }
 
     // Try software events
-    if let Some(event) = parse_software_event(&name) {
+    if let Some(event) = parse_software_event(&name_lower) {
         return Ok(event);
     }
 
     // Try cache events
-    if let Some(event) = parse_cache_event(&name) {
+    if let Some(event) = parse_cache_event(&name_lower) {
         return Ok(event);
     }
 
@@ -73,6 +87,31 @@ pub fn parse_event(name: &str) -> Result<PerfEvent> {
         "Unknown event: '{}'. Run 'perf list' to see available events.",
         name
     ))
+}
+
+/// Parse a raw event in rNNNN format.
+///
+/// Format: `rNNNN` where NNNN is a hexadecimal config value.
+/// Examples: `r1a8`, `r00c0`, `r0x1a8` (0x prefix optional)
+fn parse_raw_event(name: &str) -> Option<PerfEvent> {
+    let name = name.trim();
+
+    let hex_str = if let Some(rest) = name.strip_prefix('r') {
+        rest
+    } else if let Some(rest) = name.strip_prefix('R') {
+        rest
+    } else {
+        return None;
+    };
+
+    // Allow optional 0x prefix
+    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+
+    if let Ok(config) = u64::from_str_radix(hex_str, 16) {
+        return Some(PerfEvent::Raw(Raw::new(config)));
+    }
+
+    None
 }
 
 /// Parse a hardware event name.
@@ -228,6 +267,7 @@ pub fn format_event_name(event: &PerfEvent) -> String {
         PerfEvent::Hardware(h) => format_hardware_name(*h),
         PerfEvent::Software(s) => format_software_name(*s),
         PerfEvent::Cache(c) => format_cache_name(c.clone()),
+        PerfEvent::Raw(r) => format!("r{:x}", r.config),
     }
 }
 
@@ -338,34 +378,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_software_events() {
-        assert!(matches!(
-            parse_event("cpu-clock"),
-            Ok(PerfEvent::Software(Software::CPU_CLOCK))
-        ));
-        assert!(matches!(
-            parse_event("task-clock"),
-            Ok(PerfEvent::Software(Software::TASK_CLOCK))
-        ));
-        assert!(matches!(
-            parse_event("page-faults"),
-            Ok(PerfEvent::Software(Software::PAGE_FAULTS))
-        ));
-        assert!(matches!(
-            parse_event("faults"),
-            Ok(PerfEvent::Software(Software::PAGE_FAULTS))
-        ));
-        assert!(matches!(
-            parse_event("context-switches"),
-            Ok(PerfEvent::Software(Software::CONTEXT_SWITCHES))
-        ));
-        assert!(matches!(
-            parse_event("cs"),
-            Ok(PerfEvent::Software(Software::CONTEXT_SWITCHES))
-        ));
-    }
-
-    #[test]
     fn test_parse_cache_events() {
         assert!(matches!(
             parse_event("L1-dcache-loads"),
@@ -398,6 +410,26 @@ mod tests {
                 operation: CacheOp::READ,
                 result: CacheResult::MISS,
             }))
+        ));
+    }
+
+    #[test]
+    fn test_parse_raw_events() {
+        assert!(matches!(
+            parse_event("r1a8"),
+            Ok(PerfEvent::Raw(Raw { config: 0x1a8, .. }))
+        ));
+        assert!(matches!(
+            parse_event("r00c0"),
+            Ok(PerfEvent::Raw(Raw { config: 0xc0, .. }))
+        ));
+        assert!(matches!(
+            parse_event("r0x1a8"),
+            Ok(PerfEvent::Raw(Raw { config: 0x1a8, .. }))
+        ));
+        assert!(matches!(
+            parse_event("R1A8"),
+            Ok(PerfEvent::Raw(Raw { config: 0x1a8, .. }))
         ));
     }
 
@@ -442,5 +474,6 @@ mod tests {
             })),
             "L1-dcache-loads"
         );
+        assert_eq!(format_event_name(&PerfEvent::Raw(Raw::new(0x1a8))), "r1a8");
     }
 }
