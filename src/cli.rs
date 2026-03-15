@@ -13,6 +13,10 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub verbose: bool,
 
+    /// Disable pagination for long output
+    #[arg(long, global = true)]
+    pub no_pager: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -169,6 +173,15 @@ mod tests {
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         assert!(cli.verbose);
+        assert!(matches!(cli.command, Commands::List { .. }));
+    }
+
+    #[test]
+    fn test_no_pager_flag_parsing() {
+        let cli = Cli::try_parse_from(["perf-rs", "--no-pager", "list"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        assert!(cli.no_pager);
         assert!(matches!(cli.command, Commands::List { .. }));
     }
 

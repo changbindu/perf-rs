@@ -8,6 +8,7 @@ pub mod cli;
 pub mod commands;
 pub mod core;
 pub mod error;
+pub mod pager;
 pub mod symbols;
 
 pub use error::{PerfError, Result};

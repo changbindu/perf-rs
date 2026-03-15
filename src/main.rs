@@ -3,6 +3,7 @@ mod cli;
 mod commands;
 mod core;
 mod error;
+mod pager;
 mod symbols;
 
 use anyhow::{Context, Result};
@@ -58,7 +59,7 @@ fn run_command(args: &Cli) -> Result<()> {
                 "Executing list command: filter={:?}, detailed={}",
                 filter, detailed
             );
-            commands::list::execute(filter.as_deref(), *detailed)
+            commands::list::execute(filter.as_deref(), *detailed, args.no_pager)
                 .context("Failed to list performance events")?;
         }
         Commands::Stat {
@@ -121,8 +122,14 @@ fn run_command(args: &Cli) -> Result<()> {
                 "Executing report command: input={:?}, format={}, sort={:?}, top={:?}",
                 input, format, sort, top
             );
-            commands::report::execute(input.as_deref(), format, sort.as_deref(), *top)
-                .context("Failed to generate performance report")?;
+            commands::report::execute(
+                input.as_deref(),
+                format,
+                sort.as_deref(),
+                *top,
+                args.no_pager,
+            )
+            .context("Failed to generate performance report")?;
         }
         Commands::Script {
             input,
@@ -133,7 +140,7 @@ fn run_command(args: &Cli) -> Result<()> {
                 "Executing script command: input={:?}, format={}, callchain={}",
                 input, format, callchain
             );
-            commands::script::execute(input.as_deref(), format, *callchain)
+            commands::script::execute(input.as_deref(), format, *callchain, args.no_pager)
                 .context("Failed to generate script output")?;
         }
     }

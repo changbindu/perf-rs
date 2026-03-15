@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 
 use crate::core::perf_data::{Event, PerfDataReader, SampleEvent};
+use crate::pager::Pager;
 use crate::symbols::{MultiResolver, SymbolInfo, SymbolResolver};
 
 fn format_symbol_with_source(info: &SymbolInfo) -> String {
@@ -28,6 +30,7 @@ pub fn execute(
     _format: &str,
     sort: Option<&str>,
     top: Option<usize>,
+    no_pager: bool,
 ) -> Result<()> {
     let input_path = input.unwrap_or("perf.data");
 
@@ -112,7 +115,7 @@ pub fn execute(
         call_graph.add_sample(sample, &resolver);
     }
 
-    call_graph.sort_and_display(sort, top, total_period, &resolver);
+    call_graph.sort_and_display(sort, top, total_period, &resolver, no_pager)?;
 
     Ok(())
 }
@@ -248,7 +251,14 @@ impl CallGraph {
         top: Option<usize>,
         total_period: u64,
         resolver: &MultiResolver,
-    ) {
+        no_pager: bool,
+    ) -> Result<()> {
+        let mut output: Box<dyn Write> = if !no_pager && Pager::new().should_use_pager() {
+            Pager::new().spawn()?
+        } else {
+            Box::new(std::io::stdout())
+        };
+
         let mut sorted: Vec<(&u64, &FunctionStats)> = self.functions.iter().collect();
 
         let sort_field = sort.unwrap_or("overhead");
@@ -277,11 +287,12 @@ impl CallGraph {
             sorted.truncate(n);
         }
 
-        println!(
+        writeln!(
+            output,
             "{:>8} {:>8} {:>8} {:>8} {:<30} {:<20} {:<15}",
             "Overhead", "Self", "Total", "Samples", "Function", "Shared Object", "Comm"
-        );
-        println!("{}", "-".repeat(110));
+        )?;
+        writeln!(output, "{}", "-".repeat(110))?;
 
         for (addr, stats) in &sorted {
             let overhead = if total_period > 0 {
@@ -311,7 +322,8 @@ impl CallGraph {
                 .unwrap_or_else(|| "[unknown]".to_string());
             let comm = stats.comm.as_deref().unwrap_or("[unknown]");
 
-            println!(
+            writeln!(
+                output,
                 "{:>7.2}% {:>7.2}% {:>7.2}% {:>8} {:<30} {:<20} {:<15}",
                 overhead,
                 total_overhead,
@@ -324,29 +336,32 @@ impl CallGraph {
                 symbol_name,
                 shared_obj,
                 comm
-            );
+            )?;
         }
 
         if !self.edges.is_empty() && !sorted.is_empty() {
-            println!();
-            self.display_call_graph(&sorted, resolver);
+            writeln!(output)?;
+            self.display_call_graph(&sorted, resolver, &mut output)?;
         }
+
+        Ok(())
     }
 
     fn display_call_graph(
         &self,
         top_functions: &[(&u64, &FunctionStats)],
         resolver: &MultiResolver,
-    ) {
-        println!("# Call Graph");
-        println!("{}", "=".repeat(80));
-        println!();
+        output: &mut Box<dyn Write>,
+    ) -> Result<()> {
+        writeln!(output, "# Call Graph")?;
+        writeln!(output, "{}", "=".repeat(80))?;
+        writeln!(output)?;
 
         let display_count = std::cmp::min(top_functions.len(), 5);
 
         for (idx, (addr, _stats)) in top_functions.iter().take(display_count).enumerate() {
             if idx > 0 {
-                println!();
+                writeln!(output)?;
             }
 
             let callers: Vec<(u64, u64)> = self
@@ -365,17 +380,18 @@ impl CallGraph {
 
             let func_name = resolve_and_format(**addr, resolver);
 
-            println!(
+            writeln!(
+                output,
                 "{} [{}]",
                 func_name,
                 self.functions.get(addr).map(|s| s.self_count).unwrap_or(0)
-            );
+            )?;
 
             if !callers.is_empty() {
                 let mut sorted_callers: Vec<_> = callers.into_iter().collect();
                 sorted_callers.sort_by(|a, b| b.1.cmp(&a.1));
 
-                println!("  Callers:");
+                writeln!(output, "  Callers:")?;
                 for (caller_addr, count) in sorted_callers.iter().take(5) {
                     let caller_name = resolve_and_format(*caller_addr, resolver);
                     let stats = self.functions.get(caller_addr);
@@ -388,7 +404,11 @@ impl CallGraph {
                     } else {
                         0.0
                     };
-                    println!("    ├── {} ({} calls, {:.1}%)", caller_name, count, percent);
+                    writeln!(
+                        output,
+                        "    ├── {} ({} calls, {:.1}%)",
+                        caller_name, count, percent
+                    )?;
                 }
             }
 
@@ -396,7 +416,7 @@ impl CallGraph {
                 let mut sorted_callees: Vec<_> = callees.into_iter().collect();
                 sorted_callees.sort_by(|a, b| b.1.cmp(&a.1));
 
-                println!("  Callees:");
+                writeln!(output, "  Callees:")?;
                 for (callee_addr, count) in sorted_callees.iter().take(5) {
                     let callee_name = resolve_and_format(*callee_addr, resolver);
                     let stats = self.functions.get(callee_addr);
@@ -409,10 +429,16 @@ impl CallGraph {
                     } else {
                         0.0
                     };
-                    println!("    ├── {} ({} calls, {:.1}%)", callee_name, count, percent);
+                    writeln!(
+                        output,
+                        "    ├── {} ({} calls, {:.1}%)",
+                        callee_name, count, percent
+                    )?;
                 }
             }
         }
+
+        Ok(())
     }
 }
 

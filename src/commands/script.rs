@@ -4,11 +4,13 @@
 //! sample events in a human-readable format with symbol resolution.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 
 use crate::core::perf_data::{CommEvent, Event, MmapEvent, PerfDataReader, SampleEvent};
+use crate::pager::Pager;
 use crate::symbols::{MultiResolver, SymbolInfo, SymbolResolver};
 
 /// Format a symbol with optional source location.
@@ -47,7 +49,12 @@ fn format_timestamp(nanos: u64) -> String {
 /// Execute the script command.
 ///
 /// Reads a perf.data file and displays sample events in human-readable format.
-pub fn execute(input: Option<&str>, _format: &str, show_callchain: bool) -> Result<()> {
+pub fn execute(
+    input: Option<&str>,
+    _format: &str,
+    show_callchain: bool,
+    no_pager: bool,
+) -> Result<()> {
     let input_path = input.unwrap_or("perf.data");
 
     if !Path::new(input_path).exists() {
@@ -94,20 +101,35 @@ pub fn execute(input: Option<&str>, _format: &str, show_callchain: bool) -> Resu
             }
         }
     }
+
+    // Determine if we should use a pager
+    let pager = Pager::new();
+    let use_pager = !no_pager && pager.should_use_pager();
+
+    // Create output writer - either pager or stdout
+    let mut output: Box<dyn Write> = if use_pager {
+        pager.spawn().context("Failed to spawn pager")?
+    } else {
+        Box::new(std::io::stdout())
+    };
+
     for event in &events {
         match event {
             Event::Sample(sample) => {
-                display_sample(sample, &comm_map, &resolver, show_callchain);
+                display_sample(sample, &comm_map, &resolver, show_callchain, &mut output)?;
             }
             Event::Mmap(mmap) => {
-                display_mmap(mmap);
+                display_mmap(mmap, &mut output)?;
             }
             Event::Comm(comm) => {
-                display_comm(comm);
+                display_comm(comm, &mut output)?;
             }
             _ => {}
         }
     }
+
+    // Flush output before pager is dropped (which waits for child to finish)
+    output.flush().context("Failed to flush output")?;
 
     Ok(())
 }
@@ -115,12 +137,13 @@ pub fn execute(input: Option<&str>, _format: &str, show_callchain: bool) -> Resu
 /// Display a sample event in perf script format.
 ///
 /// Format: `comm  PID/TID [CPU] timestamp: event (addr symbol)`
-fn display_sample(
+fn display_sample<W: Write>(
     sample: &SampleEvent,
     comm_map: &HashMap<u32, String>,
     resolver: &MultiResolver,
     show_callchain: bool,
-) {
+    output: &mut W,
+) -> Result<()> {
     let comm = comm_map
         .get(&sample.tid)
         .or_else(|| comm_map.get(&sample.pid))
@@ -131,36 +154,42 @@ fn display_sample(
     let symbol = resolve_and_format(sample.ip, resolver);
     let event_name = "cycles";
 
-    println!(
+    writeln!(
+        output,
         "{:<16} {:>5}/{:<5} [000] {}: {}: {}",
         comm, sample.pid, sample.tid, timestamp, event_name, symbol
-    );
+    )?;
 
     if show_callchain {
         if let Some(ref cc) = sample.callchain {
             for &addr in cc {
                 let func = resolve_and_format(addr, resolver);
-                println!("\t{}", func);
+                writeln!(output, "\t{}", func)?;
             }
         }
     }
+
+    Ok(())
 }
 
 /// Display an mmap event.
-fn display_mmap(mmap: &MmapEvent) {
-    println!(
+fn display_mmap<W: Write>(mmap: &MmapEvent, output: &mut W) -> Result<()> {
+    writeln!(
+        output,
         "MMAP {}/{}: {:016x}-{:016x} {}",
         mmap.pid,
         mmap.tid,
         mmap.addr,
         mmap.addr + mmap.len,
         mmap.filename
-    );
+    )?;
+    Ok(())
 }
 
 /// Display a comm event.
-fn display_comm(comm: &CommEvent) {
-    println!("COMM {}/{}: {}", comm.pid, comm.tid, comm.comm);
+fn display_comm<W: Write>(comm: &CommEvent, output: &mut W) -> Result<()> {
+    writeln!(output, "COMM {}/{}: {}", comm.pid, comm.tid, comm.comm)?;
+    Ok(())
 }
 
 #[cfg(test)]

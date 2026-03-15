@@ -3,7 +3,12 @@
 //! This module implements the `perf list` command which displays available
 //! hardware and software performance events.
 
+use std::io::Write;
+
+use anyhow::{Context, Result};
+
 use crate::arch;
+use crate::pager::Pager;
 
 /// Event information for display
 struct EventInfo {
@@ -169,7 +174,7 @@ fn matches_filter(event: &EventInfo, filter: &str) -> bool {
 }
 
 /// Execute the list command
-pub fn execute(filter: Option<&str>, detailed: bool) -> crate::error::Result<()> {
+pub fn execute(filter: Option<&str>, detailed: bool, no_pager: bool) -> Result<()> {
     let mut events = Vec::new();
 
     events.extend(get_hardware_events());
@@ -184,8 +189,19 @@ pub fn execute(filter: Option<&str>, detailed: bool) -> crate::error::Result<()>
         events
     };
 
+    // Determine if we should use a pager
+    let pager = Pager::new();
+    let use_pager = !no_pager && pager.should_use_pager();
+
+    // Create output writer - either pager or stdout
+    let mut output: Box<dyn Write> = if use_pager {
+        pager.spawn().context("Failed to spawn pager")?
+    } else {
+        Box::new(std::io::stdout())
+    };
+
     if filtered_events.is_empty() {
-        println!("No events found matching filter: {:?}", filter);
+        writeln!(output, "No events found matching filter: {:?}", filter)?;
         return Ok(());
     }
 
@@ -202,18 +218,21 @@ pub fn execute(filter: Option<&str>, detailed: bool) -> crate::error::Result<()>
     software_events.sort_by_key(|e| e.name.clone());
 
     if !hardware_events.is_empty() {
-        println!("\nList of hardware events:");
+        writeln!(output, "\nList of hardware events:")?;
         for event in hardware_events {
-            println!("{}", format_event(event, detailed));
+            writeln!(output, "{}", format_event(event, detailed))?;
         }
     }
 
     if !software_events.is_empty() {
-        println!("\nList of software events:");
+        writeln!(output, "\nList of software events:")?;
         for event in software_events {
-            println!("{}", format_event(event, detailed));
+            writeln!(output, "{}", format_event(event, detailed))?;
         }
     }
+
+    // Flush output before pager is dropped (which waits for child to finish)
+    output.flush().context("Failed to flush output")?;
 
     Ok(())
 }
