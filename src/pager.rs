@@ -141,7 +141,16 @@ impl Pager {
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No pager available"))?;
 
-        let mut child = Command::new(pager_path).stdin(Stdio::piped()).spawn()?;
+        // Build command with appropriate flags
+        let mut cmd = Command::new(pager_path);
+
+        // For 'less', add -X to keep output on screen after exit
+        // and -R to handle ANSI color sequences
+        if pager_path.file_name().is_some_and(|name| name == "less") {
+            cmd.args(["-X", "-R"]);
+        }
+
+        let mut child = cmd.stdin(Stdio::piped()).spawn()?;
 
         let stdin = child.stdin.take().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, "Failed to open pager stdin")
