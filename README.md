@@ -1,5 +1,9 @@
 # perf-rs
 
+> **⚠️ Work in Progress**
+>
+> This project is currently under active development and is a work-in-progress. It has been developed with heavy assistance from AI tools. Expect incomplete features, potential bugs, and evolving APIs. Use at your own risk.
+
 A Linux performance monitoring tool written in Rust. It provides functionality similar to the `perf` command-line tool, enabling developers to profile and analyze application performance through hardware performance counters.
 
 ## Features
