@@ -201,6 +201,62 @@ The tool automatically detects the current architecture and provides relevant ev
 - Basic event filtering compared to perf
 - No support for BPF or eBPF programs
 
+## Current Status
+
+### Feature Completion
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Commands** |||
+| `list` - Event enumeration | ✅ Complete | Hardware, software, raw events with filtering |
+| `stat` - Performance counting | ✅ Complete | Per-process, system-wide, per-CPU modes |
+| `record` - Sample profiling | ✅ Complete | Frequency/period, call graphs (-g) |
+| `report` - Data analysis | ✅ Complete | Symbol resolution, overhead calculation |
+| `script` - Trace dump | ✅ Complete | Text/JSON output with callchains |
+| **Core Features** |||
+| perf.data read/write | ✅ Complete | PERFILE2 format, Linux perf compatible |
+| Symbol resolution (ELF) | ✅ Complete | Symbol table + DWARF debug info |
+| Symbol resolution (kernel) | ✅ Complete | /proc/kallsyms parsing |
+| Ring buffer sampling | ✅ Complete | Per-PID and per-CPU modes |
+| **Architecture Support** |||
+| x86_64 | ✅ Complete | Intel/AMD PMU events + sysfs discovery |
+| ARM64 | ✅ Complete | Cortex-A/Neoverse events + sysfs discovery |
+| RISC-V 64 | ✅ Complete | Standard/SiFive events + sysfs discovery |
+| **Output & UX** |||
+| JSON output | ✅ Complete | report and script commands |
+| Pagination | ✅ Complete | list, report, script with pager |
+| **Planned Features** |||
+| Tracepoint support | ❌ Planned | Limited vs Linux perf |
+| Live monitoring mode | ❌ Planned | Real-time profiling |
+| TUI interface | ❌ Planned | Interactive report viewer |
+| Advanced event filtering | 🔲 Partial | Basic filtering, advanced filters planned |
+| BPF/eBPF support | ⏸️ Not Planned | Out of current scope |
+
+**Status Legend**: ✅ Complete | 🔲 Partial | ❌ Planned | ⏸️ Not Planned
+
+## Development Plan
+
+### Near-Term Goals
+
+- **Tracepoint Support**: Parse and record tracepoint events (syscalls, sched, etc.)
+- **Enhanced Event Filtering**: Advanced filter expressions in record/report commands
+
+### Mid-Term Goals
+
+- **Live Monitoring Mode**: Real-time profiling with live updates
+- **TUI Reporter**: Interactive terminal UI for report analysis (similar to `perf report` TUI)
+
+### Future Considerations
+
+- **Additional Architectures**: Support for more Linux architectures
+- **Performance Optimizations**: Further reduce profiling overhead
+- **Extended Output Formats**: Flame graph generation, Chrome tracing format
+
+### Out of Scope
+
+- BPF/eBPF program support
+- Kernel module requirements
+
 ## Project Structure
 
 ```
