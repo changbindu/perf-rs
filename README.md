@@ -53,7 +53,7 @@ sudo setcap cap_perfmon+ep $(which perf-rs)
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/perf-rs.git
+git clone https://github.com/changbindu/perf-rs.git
 cd perf-rs
 ```
 
@@ -203,59 +203,167 @@ The tool automatically detects the current architecture and provides relevant ev
 
 ## Current Status
 
-### Feature Completion
+### Commands Coverage (5/22 = 23% of Linux perf commands)
+
+| Command | Status | Description |
+|---------|--------|-------------|
+| `list` | ✅ Complete | Hardware, software, cache, raw events with filtering & pagination |
+| `stat` | ✅ Complete | Per-process, system-wide, per-CPU counting modes |
+| `record` | ✅ Complete | Frequency/period sampling, call graphs (-g), system-wide |
+| `report` | ✅ Complete | Symbol resolution, overhead calculation, JSON output |
+| `script` | ✅ Complete | Text/JSON output with callchains |
+| `top` | ❌ Planned | Live real-time profiling |
+| `annotate` | ❌ Planned | Source annotation with samples |
+| `mem` | ❌ Planned | Memory access profiling |
+| `sched` | ❌ Planned | Scheduler profiling |
+| `lock` | ❌ Planned | Lock contention analysis |
+| `kmem` | ❌ Planned | Kernel memory profiling |
+| `kvm` | ❌ Planned | KVM guest profiling |
+| `bench` | ❌ Planned | Built-in benchmarks |
+| `trace` | ❌ Planned | System call tracing |
+| `diff` | ❌ Planned | Compare perf.data files |
+| `inject` | ❌ Planned | Modify events in trace |
+| `probe` | ❌ Planned | Dynamic tracepoints |
+| `ftrace` | ❌ Planned | ftrace wrapper |
+| `timechart` | ❌ Planned | Visualization |
+| `data` | ❌ Planned | Data file conversion |
+| `evlist` | ❌ Planned | List events in file |
+| `buildid-cache` | ❌ Planned | Build-id cache management |
+
+### Event Types
+
+| Category | Status | Details |
+|----------|--------|---------|
+| Hardware events | ✅ Complete | cpu-cycles, instructions, cache-refs/misses, branches, bus-cycles, ref-cycles, stalled-cycles |
+| Software events | ✅ Complete | cpu-clock, task-clock, page-faults, context-switches, cpu-migrations, minor/major-faults, bpf-output |
+| Cache events | ✅ Complete | L1-dcache, L1-icache, LLC, dTLB, iTLB, branch, node (all variants) |
+| Raw events | ✅ Complete | rNNNN format for architecture-specific PMU events |
+| Tracepoint events | ❌ Planned | syscalls, sched, irq, timer, net, etc. |
+| kprobes | ❌ Planned | Kernel dynamic tracepoints |
+| uprobes | ❌ Planned | Userspace dynamic tracepoints |
+
+### Sampling Features
+
+| Feature | Status | Details |
+|---------|--------|---------|
+| Frequency-based sampling | ✅ Complete | `-F/--frequency` Hz |
+| Period-based sampling | ✅ Complete | `-c/--period` events |
+| Per-process (`-p/--pid`) | ✅ Complete | Attach to running process |
+| Per-CPU (`-C/--cpu`) | ✅ Complete | Specific CPUs |
+| System-wide (`-a/--all-cpus`) | ✅ Complete | All CPUs |
+| Command execution | ✅ Complete | `-- <cmd>` profiling |
+| Call graphs (`-g`) | ✅ Complete | Frame pointer unwinding |
+| Sample: IP, TID, TIME, PERIOD | ✅ Complete | Core sample data |
+| Sample: CPU, CALLCHAIN | ✅ Complete | Extended sample data |
+| LBR (Last Branch Record) | ❌ Planned | Branch trace capture |
+| PEBS | ❌ Planned | Precise Event-Based Sampling |
+| Intel PT | ❌ Planned | Full execution trace |
+| Event modifiers (:u, :k, :p) | ❌ Planned | User/kernel/precise modifiers |
+| Event groups ({e1,e2}) | ❌ Planned | Synchronized event groups |
+
+### Core Features
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| **Commands** |||
-| `list` - Event enumeration | ✅ Complete | Hardware, software, raw events with filtering |
-| `stat` - Performance counting | ✅ Complete | Per-process, system-wide, per-CPU modes |
-| `record` - Sample profiling | ✅ Complete | Frequency/period, call graphs (-g) |
-| `report` - Data analysis | ✅ Complete | Symbol resolution, overhead calculation |
-| `script` - Trace dump | ✅ Complete | Text/JSON output with callchains |
-| **Core Features** |||
 | perf.data read/write | ✅ Complete | PERFILE2 format, Linux perf compatible |
 | Symbol resolution (ELF) | ✅ Complete | Symbol table + DWARF debug info |
 | Symbol resolution (kernel) | ✅ Complete | /proc/kallsyms parsing |
 | Ring buffer sampling | ✅ Complete | Per-PID and per-CPU modes |
-| **Architecture Support** |||
-| x86_64 | ✅ Complete | Intel/AMD PMU events + sysfs discovery |
-| ARM64 | ✅ Complete | Cortex-A/Neoverse events + sysfs discovery |
-| RISC-V 64 | ✅ Complete | Standard/SiFive events + sysfs discovery |
-| **Output & UX** |||
-| JSON output | ✅ Complete | report and script commands |
+| Privilege checking | ✅ Complete | Root, CAP_SYS_ADMIN, CAP_PERFMON detection |
+
+### Architecture Support
+
+| Architecture | Status | PMU Events |
+|--------------|--------|------------|
+| x86_64 | ✅ Complete | Intel + AMD events + sysfs discovery |
+| ARM64 | ✅ Complete | Cortex-A + Neoverse events + sysfs discovery |
+| RISC-V 64 | ✅ Complete | Standard + SiFive events + sysfs discovery |
+| x86 (32-bit) | ❌ Not Planned | - |
+| ARM (32-bit) | ❌ Not Planned | - |
+| PowerPC | ❌ Not Planned | - |
+| s390 | ❌ Not Planned | - |
+
+### Output & UX
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Text output | ✅ Complete | Default for all commands |
+| JSON output | ✅ Complete | `--format json` for report/script |
 | Pagination | ✅ Complete | list, report, script with pager |
-| **Planned Features** |||
-| Tracepoint support | ❌ Planned | Limited vs Linux perf |
-| Live monitoring mode | ❌ Planned | Real-time profiling |
+| CSV output | ❌ Planned | Export to CSV format |
+| Flame graphs | ❌ Planned | Visualization support |
+| Chrome tracing | ❌ Planned | Chrome DevTools format |
 | TUI interface | ❌ Planned | Interactive report viewer |
-| Advanced event filtering | 🔲 Partial | Basic filtering, advanced filters planned |
-| BPF/eBPF support | ⏸️ Not Planned | Out of current scope |
-
-**Status Legend**: ✅ Complete | 🔲 Partial | ❌ Planned | ⏸️ Not Planned
-
-## Development Plan
-
-### Near-Term Goals
-
-- **Tracepoint Support**: Parse and record tracepoint events (syscalls, sched, etc.)
-- **Enhanced Event Filtering**: Advanced filter expressions in record/report commands
-
-### Mid-Term Goals
-
-- **Live Monitoring Mode**: Real-time profiling with live updates
-- **TUI Reporter**: Interactive terminal UI for report analysis (similar to `perf report` TUI)
-
-### Future Considerations
-
-- **Additional Architectures**: Support for more Linux architectures
-- **Performance Optimizations**: Further reduce profiling overhead
-- **Extended Output Formats**: Flame graph generation, Chrome tracing format
 
 ### Out of Scope
 
-- BPF/eBPF program support
-- Kernel module requirements
+| Feature | Reason |
+|---------|--------|
+| BPF/eBPF program support | Requires kernel integration beyond profiling |
+| Kernel module requirements | User-space tool design |
+| DWARF call stack unwinding | Frame pointer sufficient for most cases |
+
+**Status Legend**: ✅ Complete | ❌ Planned | ⏸️ Not Planned
+
+## Development Plan
+
+### Near-Term Goals (v0.2)
+
+- **Tracepoint Support**
+  - Parse tracepoint event formats from `/sys/kernel/debug/tracing/events/`
+  - Support common tracepoint categories: syscalls, sched, irq, timer
+  - Add `tracepoint` event type parsing and recording
+
+- **Enhanced Event Filtering**
+  - Event modifiers (`:u`, `:k`, `:p`, `:P`)
+  - Filter expressions for record/report
+  - Per-event privilege levels
+
+- **Additional Commands**
+  - `perf evlist`: List events in perf.data file
+  - `perf diff`: Compare two perf.data files
+
+### Mid-Term Goals (v0.3)
+
+- **Live Monitoring Mode**
+  - Real-time profiling with `perf top`
+  - Live updates and statistics display
+  - Interactive process selection
+
+- **TUI Reporter**
+  - Interactive terminal UI for `perf report`
+  - Keyboard navigation and filtering
+  - Zoom into call chains
+
+- **Advanced Sampling**
+  - LBR (Last Branch Record) support for branch profiling
+  - Event groups for synchronized measurement
+  - Precise sampling (PEBS) on supported hardware
+
+### Long-Term Goals (v0.4+)
+
+- **Extended Output Formats**
+  - Flame graph SVG generation
+  - Chrome tracing JSON format
+  - CSV export for data analysis
+
+- **Memory Profiling**
+  - `perf mem` command for memory access patterns
+  - Data address sampling
+  - Memory latency analysis
+
+- **Scheduler Analysis**
+  - `perf sched` for scheduler profiling
+  - Wakeup latency and migration tracking
+
+- **Additional Architectures**
+  - Evaluate demand for PowerPC, s390, MIPS support
+
+### Not Planned
+
+- BPF/eBPF program support (kernel subsystem, not profiling tool)
+- Kernel module requirements (violates user-space design)
+- Full Intel PT decoding (extensive decoder complexity)
 
 ## Project Structure
 
