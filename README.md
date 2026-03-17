@@ -174,32 +174,112 @@ The tool automatically detects the current architecture and provides relevant ev
 
 ## Comparison with Standard perf
 
+### Core Comparison
+
 | Feature | perf-rs | Linux perf |
 |---------|---------|------------|
 | Language | Rust | C |
 | Safety | Memory-safe | Manual memory management |
-| Dependencies | Minimal | Heavy (elfutils, libtraceevent, etc.) |
+| Dependencies | Minimal (static binary) | Heavy (elfutils, libtraceevent, etc.) |
 | Symbol Resolution | Built-in (gimli/addr2line) | Requires external libraries |
 | Architecture Support | x86_64, ARM64, RISC-V | All Linux architectures |
-| Event Discovery | Sysfs + builtin | Sysfs + tracepoint |
-| Binary Size | Smaller | Larger |
+| Binary Size | Smaller (~5MB static) | Larger (~15MB + libs) |
 | Performance | Comparable | Native |
+
+### Competitive Differentiation
+
+Rather than matching Linux perf feature-for-feature, perf-rs differentiates in areas where Linux perf is fundamentally limited:
+
+| Capability | perf-rs | Linux perf |
+|------------|---------|------------|
+| **Library API** | ✅ Rust library for embedding | ❌ Command-line only |
+| **Remote profiling** | ✅ Planned (agent/server model) | ❌ Local machine only |
+| **Multi-host aggregation** | ✅ Planned (cluster profiling) | ❌ Single host |
+| **CI/CD integration** | ✅ Planned (regression detection) | ❌ Manual scripting required |
+| **Programmatic use** | ✅ Clean Rust API | ❌ Parse text output |
+| **Container-aware** | ✅ Planned (K8s native) | ❌ Requires manual setup |
+| **Deployment** | Single static binary | Requires system packages |
+
+### Where perf-rs Excels
+
+**1. Embeddable Profiling**
+```rust
+use perf_rs::{Profiler, Event};
+
+// Profile from within your application
+let profiler = Profiler::new()
+    .event(Event::CpuCycles)
+    .frequency(999)?;
+
+let session = profiler.start()?;
+expensive_operation();
+let profile = session.stop()?;
+
+let report = profile.analyze()?;
+println!("Hottest functions: {:?}", report.top_functions(5));
+```
+
+**2. Remote Profiling (Planned)**
+```bash
+# Run agent on production server
+perf-rs agent --server profiling.internal:50051
+
+# Profile remotely from developer machine
+perf-rs remote --host prod-server-1 --duration 30s --event cpu-cycles
+```
+
+**3. Cluster Profiling (Planned)**
+```bash
+# Profile multiple hosts simultaneously
+perf-rs remote --hosts server1,server2,server3 \
+  --event instructions --duration 60s \
+  --output cluster-profile.data
+```
+
+**4. CI/CD Regression Detection (Planned)**
+```bash
+# Fail CI if performance regresses > 10%
+perf-rs compare baseline.data perf.data --threshold 10%
+```
+
+### Where Linux perf Excels
+
+Linux perf remains superior for:
+- Tracepoint and ftrace integration
+- BPF/eBPF program support
+- All Linux architecture support
+- Kernel developer workflows
+- Mature ecosystem and documentation
+
+### Strategic Position
+
+perf-rs targets a different use case than Linux perf:
+
+| Use Case | Recommended Tool |
+|----------|------------------|
+| Kernel debugging | Linux perf |
+| BPF program development | Linux perf |
+| One-off local profiling | Linux perf or perf-rs |
+| Embedded profiling in applications | perf-rs |
+| Production/remote profiling | perf-rs |
+| Cluster-wide analysis | perf-rs |
+| CI/CD performance gates | perf-rs |
 
 ### Advantages of perf-rs
 
 - Memory-safe implementation in Rust
-- Minimal dependencies
+- Minimal dependencies, static binary deployment
 - Self-contained symbol resolution
 - Clean, modern codebase
-- Easier to extend and maintain
+- Embeddable as library
+- Designed for remote and distributed profiling
 
-### Limitations
+### Limitations vs Linux perf
 
-- Fewer supported architectures than standard perf
-- Limited tracepoint support
-- No live mode or TUI reporter (yet)
-- Basic event filtering compared to perf
-- No support for BPF or eBPF programs
+- Fewer supported architectures (3 vs 20+)
+- Limited tracepoint support (planned)
+- No BPF/eBPF program support (not planned)
+- Fewer commands (5 vs 22)
 
 ## Current Status
 
@@ -307,63 +387,108 @@ The tool automatically detects the current architecture and provides relevant ev
 
 ## Development Plan
 
-### Near-Term Goals (v0.2)
+The development roadmap prioritizes **differentiation over feature parity**. perf-rs focuses on capabilities that Linux perf cannot provide: embeddable library API, remote profiling, and CI/CD integration.
 
-- **Tracepoint Support**
-  - Parse tracepoint event formats from `/sys/kernel/debug/tracing/events/`
-  - Support common tracepoint categories: syscalls, sched, irq, timer
-  - Add `tracepoint` event type parsing and recording
+### Differentiation Features
 
-- **Enhanced Event Filtering**
-  - Event modifiers (`:u`, `:k`, `:p`, `:P`)
-  - Filter expressions for record/report
-  - Per-event privilege levels
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Library API | ❌ Planned | Rust library for embedding profiling in applications |
+| Remote agent | ❌ Planned | Profile production servers over network |
+| Remote server | ❌ Planned | Central collection and analysis server |
+| Multi-host profiling | ❌ Planned | Profile clusters simultaneously |
+| Regression detection | ❌ Planned | CI/CD performance gates |
 
-- **Additional Commands**
-  - `perf evlist`: List events in perf.data file
-  - `perf diff`: Compare two perf.data files
+### Phase 1: Library API (v0.2) - Foundation
 
-### Mid-Term Goals (v0.3)
+Expose clean Rust API for programmatic profiling:
 
-- **Live Monitoring Mode**
+- **Profiler API**
+  - `Profiler::new()` builder pattern
+  - `profiler.start()` → `Session`
+  - `session.stop()` → `ProfileData`
+  - `ProfileData.analyze()` → `Report`
+
+- **Async Support**
+  - Tokio integration for async profiling
+  - Non-blocking sample collection
+
+- **Examples**
+  - Embedded profiler in application
+  - Custom analysis pipeline
+  - Integration with tracing/logging
+
+### Phase 2: Remote Profiling (v0.3) - Core Differentiation
+
+Enable profiling over network:
+
+- **Agent Mode**
+  - `perf-rs agent --server <addr>` - lightweight daemon
+  - Accept remote commands (start/stop/status)
+  - Stream samples over gRPC
+
+- **Server Mode**
+  - `perf-rs server` - central collection point
+  - Aggregate samples from multiple agents
+  - REST API for triggering profiles
+
+- **Remote Commands**
+  - `perf-rs remote --host <ip> --duration 30s`
+  - TLS encryption for transport
+  - Authentication (token-based)
+
+### Phase 3: Multi-Host & CI/CD (v0.4) - Automation
+
+Scale to clusters and pipelines:
+
+- **Cluster Profiling**
+  - Profile multiple hosts in parallel
+  - `perf-rs remote --hosts host1,host2,host3`
+  - Aggregate reports across cluster
+
+- **Regression Detection**
+  - `perf-rs compare baseline.data current.data`
+  - Configurable thresholds (--threshold 10%)
+  - Exit codes for CI pass/fail
+
+- **CI/CD Integration**
+  - GitHub Actions integration
+  - GitLab CI templates
+  - Historical trend tracking
+
+### Phase 4: Enhanced Features (v0.5+)
+
+- **Container Support**
+  - Profile containers from host
+  - K8s operator for cluster profiling
+  - Namespace-aware sampling
+
+- **Live Mode**
   - Real-time profiling with `perf top`
-  - Live updates and statistics display
-  - Interactive process selection
+  - Web dashboard for remote monitoring
 
-- **TUI Reporter**
-  - Interactive terminal UI for `perf report`
-  - Keyboard navigation and filtering
-  - Zoom into call chains
-
-- **Advanced Sampling**
-  - LBR (Last Branch Record) support for branch profiling
-  - Event groups for synchronized measurement
-  - Precise sampling (PEBS) on supported hardware
-
-### Long-Term Goals (v0.4+)
-
-- **Extended Output Formats**
+- **Output Formats**
   - Flame graph SVG generation
-  - Chrome tracing JSON format
-  - CSV export for data analysis
+  - Chrome tracing format
+  - pprof compatibility
 
-- **Memory Profiling**
-  - `perf mem` command for memory access patterns
-  - Data address sampling
-  - Memory latency analysis
+### Feature Parity Goals (Secondary)
 
-- **Scheduler Analysis**
-  - `perf sched` for scheduler profiling
-  - Wakeup latency and migration tracking
+These Linux perf features are planned but secondary to differentiation:
 
-- **Additional Architectures**
-  - Evaluate demand for PowerPC, s390, MIPS support
+- **Tracepoint Support** - Parse `/sys/kernel/debug/tracing/events/`
+- **Event Modifiers** - `:u`, `:k`, `:p` modifiers
+- **Live Monitoring** - `perf top` command
+- **TUI Interface** - Interactive report viewer
 
 ### Not Planned
 
-- BPF/eBPF program support (kernel subsystem, not profiling tool)
+Features that don't align with perf-rs's differentiation strategy:
+
+- BPF/eBPF program support (kernel subsystem, use Linux perf)
 - Kernel module requirements (violates user-space design)
 - Full Intel PT decoding (extensive decoder complexity)
+- All Linux architecture support (focus on x86_64, ARM64, RISC-V)
 
 ## Project Structure
 
