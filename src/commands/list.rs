@@ -1,14 +1,16 @@
 //! List available performance events
 //!
 //! This module implements the `perf list` command which displays available
-//! hardware and software performance events.
+//! hardware, software, and tracepoint performance events.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 
 use anyhow::{Context, Result};
 
 use crate::arch;
 use crate::pager::Pager;
+use crate::tracepoint;
 
 /// Event information for display
 struct EventInfo {
@@ -138,6 +140,34 @@ fn get_raw_event_info() -> EventInfo {
     }
 }
 
+/// Get all tracepoint events from tracefs.
+///
+/// Returns tracepoints grouped by subsystem. Each tracepoint is represented
+/// as `subsystem:event_name` format.
+///
+/// # Errors
+///
+/// Returns an empty vector if tracefs is not mounted or permission is denied,
+/// allowing the list command to continue showing other events.
+fn get_tracepoint_events() -> Vec<EventInfo> {
+    match tracepoint::discover_tracepoints() {
+        Ok(tracepoints) => tracepoints
+            .into_iter()
+            .map(|(subsystem, name)| EventInfo {
+                name: format!("{}:{}", subsystem, name),
+                aliases: vec![],
+                category: "Tracepoint event".to_string(),
+                description: format!("Tracepoint: {}.{}", subsystem, name),
+                detailed_description: format!(
+                    "Kernel tracepoint in the {} subsystem. Use 'perf record -e {}:{}' to record samples.",
+                    subsystem, subsystem, name
+                ),
+            })
+            .collect(),
+        Err(_) => vec![],
+    }
+}
+
 /// Format an event for display
 fn format_event(event: &EventInfo, detailed: bool) -> String {
     let mut line = format!("  {:<40}", event.name);
@@ -191,6 +221,7 @@ pub fn execute(filter: Option<&str>, detailed: bool, no_pager: bool) -> Result<(
     events.extend(get_hardware_events());
     events.extend(get_software_events());
     events.push(get_raw_event_info());
+    events.extend(get_tracepoint_events());
 
     let filtered_events: Vec<_> = if let Some(filter_str) = filter {
         events
@@ -229,6 +260,10 @@ pub fn execute(filter: Option<&str>, detailed: bool, no_pager: bool) -> Result<(
         .iter()
         .filter(|e| e.category == "Raw event")
         .collect();
+    let tracepoint_events: Vec<_> = filtered_events
+        .iter()
+        .filter(|e| e.category == "Tracepoint event")
+        .collect();
 
     hardware_events.sort_by_key(|e| e.name.clone());
     software_events.sort_by_key(|e| e.name.clone());
@@ -254,10 +289,62 @@ pub fn execute(filter: Option<&str>, detailed: bool, no_pager: bool) -> Result<(
         }
     }
 
+    if !tracepoint_events.is_empty() {
+        writeln!(output, "\nList of tracepoint events:")?;
+        display_tracepoints_by_subsystem(&mut output, &tracepoint_events, detailed)?;
+    }
+
     // Flush output before pager is dropped (which waits for child to finish)
     output.flush().context("Failed to flush output")?;
 
     Ok(())
+}
+
+/// Display tracepoints grouped by subsystem.
+fn display_tracepoints_by_subsystem(
+    output: &mut Box<dyn Write>,
+    tracepoints: &[&EventInfo],
+    detailed: bool,
+) -> Result<()> {
+    let mut by_subsystem: BTreeMap<String, Vec<&EventInfo>> = BTreeMap::new();
+
+    for tp in tracepoints {
+        let subsystem = tp.name.split(':').next().unwrap_or("unknown").to_string();
+        by_subsystem.entry(subsystem).or_default().push(*tp);
+    }
+
+    for (subsystem, mut events) in by_subsystem {
+        events.sort_by_key(|e| e.name.clone());
+
+        writeln!(output, "\n  {}:", subsystem)?;
+        for event in events {
+            let formatted = format_tracepoint_event(event, detailed);
+            writeln!(output, "    {}", formatted)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Format a tracepoint event for display (without subsystem prefix in name).
+fn format_tracepoint_event(event: &EventInfo, detailed: bool) -> String {
+    let name_without_subsystem = event
+        .name
+        .split_once(':')
+        .map(|(_, name)| name)
+        .unwrap_or(&event.name);
+
+    let mut line = format!("{:<36}", name_without_subsystem);
+    line.push_str("[Tracepoint event]");
+
+    let description = if detailed {
+        &event.detailed_description
+    } else {
+        &event.description
+    };
+    line.push_str(&format!("\n      {}", description));
+
+    line
 }
 
 #[cfg(test)]
@@ -377,5 +464,92 @@ mod tests {
         assert!(formatted.contains("cpu-cycles"));
         assert!(formatted.contains("cycles"));
         assert!(formatted.contains("OR"));
+    }
+
+    #[test]
+    fn test_get_tracepoint_events_returns_vec() {
+        let events = get_tracepoint_events();
+        // Should return a vector (may be empty if tracefs not mounted)
+        for event in &events {
+            assert_eq!(event.category, "Tracepoint event");
+            assert!(event.name.contains(':'));
+        }
+    }
+
+    #[test]
+    fn test_format_tracepoint_event() {
+        let event = EventInfo {
+            name: "sched:sched_switch".to_string(),
+            aliases: vec![],
+            category: "Tracepoint event".to_string(),
+            description: "Tracepoint: sched.sched_switch".to_string(),
+            detailed_description: "Detailed tracepoint info".to_string(),
+        };
+
+        let formatted = format_tracepoint_event(&event, false);
+        assert!(formatted.contains("sched_switch"));
+        assert!(!formatted.contains("sched:sched_switch"));
+        assert!(formatted.contains("[Tracepoint event]"));
+    }
+
+    #[test]
+    fn test_format_tracepoint_event_detailed() {
+        let event = EventInfo {
+            name: "syscalls:sys_enter_openat".to_string(),
+            aliases: vec![],
+            category: "Tracepoint event".to_string(),
+            description: "Short desc".to_string(),
+            detailed_description: "Detailed tracepoint description".to_string(),
+        };
+
+        let formatted = format_tracepoint_event(&event, true);
+        assert!(formatted.contains("sys_enter_openat"));
+        assert!(formatted.contains("Detailed tracepoint description"));
+    }
+
+    #[test]
+    fn test_matches_filter_tracepoint_subsystem() {
+        let event = EventInfo {
+            name: "sched:sched_switch".to_string(),
+            aliases: vec![],
+            category: "Tracepoint event".to_string(),
+            description: "Tracepoint: sched.sched_switch".to_string(),
+            detailed_description: "Detailed".to_string(),
+        };
+
+        assert!(matches_filter(&event, "sched"));
+        assert!(matches_filter(&event, "SCHED"));
+        assert!(matches_filter(&event, "switch"));
+        assert!(!matches_filter(&event, "syscall"));
+    }
+
+    #[test]
+    fn test_matches_filter_tracepoint_full_name() {
+        let event = EventInfo {
+            name: "syscalls:sys_enter_openat".to_string(),
+            aliases: vec![],
+            category: "Tracepoint event".to_string(),
+            description: "Tracepoint: syscalls.sys_enter_openat".to_string(),
+            detailed_description: "Detailed".to_string(),
+        };
+
+        assert!(matches_filter(&event, "syscalls"));
+        assert!(matches_filter(&event, "openat"));
+        assert!(matches_filter(&event, "sys_enter"));
+        assert!(!matches_filter(&event, "sched"));
+    }
+
+    #[test]
+    fn test_matches_filter_tracepoint_category() {
+        let event = EventInfo {
+            name: "irq:irq_handler_entry".to_string(),
+            aliases: vec![],
+            category: "Tracepoint event".to_string(),
+            description: "Tracepoint: irq.irq_handler_entry".to_string(),
+            detailed_description: "Detailed".to_string(),
+        };
+
+        assert!(matches_filter(&event, "tracepoint"));
+        assert!(!matches_filter(&event, "hardware"));
     }
 }
