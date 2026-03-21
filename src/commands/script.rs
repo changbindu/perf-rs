@@ -9,9 +9,98 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::core::perf_data::{CommEvent, Event, MmapEvent, PerfDataReader, SampleEvent};
+use crate::core::perf_data::{
+    CommEvent, Event, MmapEvent, PerfDataReader, PerfEventAttr, SampleEvent,
+};
 use crate::pager::Pager;
 use crate::symbols::{MultiResolver, SymbolInfo, SymbolResolver};
+
+const PERF_TYPE_HARDWARE: u32 = 0;
+const PERF_TYPE_SOFTWARE: u32 = 1;
+const PERF_TYPE_TRACEPOINT: u32 = 2;
+const PERF_TYPE_HW_CACHE: u32 = 3;
+const PERF_TYPE_RAW: u32 = 4;
+
+fn lookup_tracepoint_name(id: u64) -> Option<String> {
+    let tracefs_paths = [
+        "/sys/kernel/tracing/events",
+        "/sys/kernel/debug/tracing/events",
+    ];
+
+    for base_path in &tracefs_paths {
+        if !Path::new(base_path).exists() {
+            continue;
+        }
+
+        if let Ok(entries) = std::fs::read_dir(base_path) {
+            for subsystem_entry in entries.flatten() {
+                let subsystem_path = subsystem_entry.path();
+                if !subsystem_path.is_dir() {
+                    continue;
+                }
+                if let Ok(event_entries) = std::fs::read_dir(&subsystem_path) {
+                    for event_entry in event_entries.flatten() {
+                        let id_path = event_entry.path().join("id");
+                        if id_path.exists() {
+                            if let Ok(id_str) = std::fs::read_to_string(&id_path) {
+                                if let Ok(event_id) = id_str.trim().parse::<u64>() {
+                                    if event_id == id {
+                                        let subsystem = subsystem_path
+                                            .file_name()
+                                            .map(|s| s.to_string_lossy().into_owned());
+                                        let event =
+                                            event_entry.file_name().to_string_lossy().into_owned();
+                                        if let Some(s) = subsystem {
+                                            return Some(format!("{}:{}", s, event));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn attr_to_event_name(attr: &PerfEventAttr) -> String {
+    match attr.type_ {
+        PERF_TYPE_HARDWARE => match attr.config {
+            0 => "cpu-cycles".to_string(),
+            1 => "instructions".to_string(),
+            2 => "cache-references".to_string(),
+            3 => "cache-misses".to_string(),
+            4 => "branch-instructions".to_string(),
+            5 => "branch-misses".to_string(),
+            6 => "bus-cycles".to_string(),
+            7 => "stalled-cycles-frontend".to_string(),
+            8 => "stalled-cycles-backend".to_string(),
+            9 => "ref-cycles".to_string(),
+            _ => format!("hardware:{}", attr.config),
+        },
+        PERF_TYPE_SOFTWARE => match attr.config {
+            0 => "cpu-clock".to_string(),
+            1 => "task-clock".to_string(),
+            2 => "page-faults".to_string(),
+            3 => "context-switches".to_string(),
+            4 => "cpu-migrations".to_string(),
+            5 => "minor-faults".to_string(),
+            6 => "major-faults".to_string(),
+            7 => "alignment-faults".to_string(),
+            8 => "emulation-faults".to_string(),
+            9 => "dummy".to_string(),
+            10 => "bpf-output".to_string(),
+            _ => format!("software:{}", attr.config),
+        },
+        PERF_TYPE_TRACEPOINT => lookup_tracepoint_name(attr.config)
+            .unwrap_or_else(|| format!("tracepoint:{}", attr.config)),
+        PERF_TYPE_HW_CACHE => format!("cache:{}", attr.config),
+        PERF_TYPE_RAW => format!("r{:x}", attr.config),
+        _ => format!("unknown:{}", attr.type_),
+    }
+}
 
 /// Format a symbol with optional source location.
 fn format_symbol_with_source(info: &SymbolInfo, addr: u64) -> String {
@@ -63,6 +152,13 @@ pub fn execute(
 
     let mut reader = PerfDataReader::from_path(input_path)
         .with_context(|| format!("Failed to open {}", input_path))?;
+
+    // Get event name from attrs (use first attr for now - we only support single event)
+    let event_name = reader
+        .attrs()
+        .first()
+        .map(attr_to_event_name)
+        .unwrap_or_else(|| "unknown".to_string());
 
     let events = reader
         .read_all_events()
@@ -116,7 +212,14 @@ pub fn execute(
     for event in &events {
         match event {
             Event::Sample(sample) => {
-                display_sample(sample, &comm_map, &resolver, show_callchain, &mut output)?;
+                display_sample(
+                    sample,
+                    &comm_map,
+                    &resolver,
+                    show_callchain,
+                    &event_name,
+                    &mut output,
+                )?;
             }
             Event::Mmap(mmap) => {
                 display_mmap(mmap, &mut output)?;
@@ -142,6 +245,7 @@ fn display_sample<W: Write>(
     comm_map: &HashMap<u32, String>,
     resolver: &MultiResolver,
     show_callchain: bool,
+    event_name: &str,
     output: &mut W,
 ) -> Result<()> {
     let comm = comm_map
@@ -152,7 +256,6 @@ fn display_sample<W: Write>(
 
     let timestamp = format_timestamp(sample.time);
     let symbol = resolve_and_format(sample.ip, resolver);
-    let event_name = "cycles";
 
     writeln!(
         output,
