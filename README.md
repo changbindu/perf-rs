@@ -293,32 +293,19 @@ perf-rs targets a different use case than Linux perf:
 
 ## Current Status
 
-### Commands Coverage (5/22 = 23% of Linux perf commands)
+### Commands Coverage (5/9 = 56% of core commands)
 
 | Command | Status | Description |
 |---------|--------|-------------|
-| `list` | ✅ Complete | Hardware, software, cache, raw events with filtering & pagination |
+| `list` | ✅ Complete | Hardware, software, cache, raw, tracepoint events with filtering & pagination |
 | `stat` | ✅ Complete | Per-process, system-wide, per-CPU counting modes |
 | `record` | ✅ Complete | Frequency/period sampling, call graphs (-g), system-wide |
 | `report` | ✅ Complete | Symbol resolution, overhead calculation, JSON output |
 | `script` | ✅ Complete | Text/JSON output with callchains |
 | `top` | ❌ Planned | Live real-time profiling |
-| `annotate` | ❌ Planned | Source annotation with samples |
-| `mem` | ❌ Planned | Memory access profiling |
-| `sched` | ❌ Planned | Scheduler profiling |
-| `lock` | ❌ Planned | Lock contention analysis |
-| `kmem` | ❌ Planned | Kernel memory profiling |
-| `kvm` | ❌ Planned | KVM guest profiling |
-| `bench` | ❌ Planned | Built-in benchmarks |
-| `trace` | ❌ Planned | System call tracing |
 | `diff` | ❌ Planned | Compare perf.data files |
-| `inject` | ❌ Planned | Modify events in trace |
-| `probe` | ❌ Planned | Dynamic tracepoints |
-| `ftrace` | ❌ Planned | ftrace wrapper |
-| `timechart` | ❌ Planned | Visualization |
-| `data` | ❌ Planned | Data file conversion |
 | `evlist` | ❌ Planned | List events in file |
-| `buildid-cache` | ❌ Planned | Build-id cache management |
+| `kvm` | ❌ Planned | KVM guest profiling |
 
 ### Event Types
 
