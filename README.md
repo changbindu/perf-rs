@@ -293,7 +293,7 @@ perf-rs targets a different use case than Linux perf:
 
 ## Current Status
 
-### Commands Coverage (5/9 = 56% of core commands)
+### Commands Coverage (5/7 = 71% of core commands)
 
 | Command | Status | Description |
 |---------|--------|-------------|
@@ -302,10 +302,8 @@ perf-rs targets a different use case than Linux perf:
 | `record` | ✅ Complete | Frequency/period sampling, call graphs (-g), system-wide |
 | `report` | ✅ Complete | Symbol resolution, overhead calculation, JSON output |
 | `script` | ✅ Complete | Text/JSON output with callchains |
-| `top` | ❌ Planned | Live real-time profiling |
 | `diff` | ❌ Planned | Compare perf.data files |
 | `evlist` | ❌ Planned | List events in file |
-| `kvm` | ❌ Planned | KVM guest profiling |
 
 ### Event Types
 
@@ -460,10 +458,6 @@ Scale to clusters and pipelines:
   - K8s operator for cluster profiling
   - Namespace-aware sampling
 
-- **Live Mode**
-  - Real-time profiling with `perf top`
-  - Web dashboard for remote monitoring
-
 - **Output Formats**
   - Flame graph SVG generation
   - Chrome tracing format
@@ -474,7 +468,6 @@ Scale to clusters and pipelines:
 These Linux perf features are planned but secondary to differentiation:
 
 - **Event Modifiers** - `:u`, `:k`, `:p` modifiers
-- **Live Monitoring** - `perf top` command
 - **TUI Interface** - Interactive report viewer
 
 ### Not Planned
