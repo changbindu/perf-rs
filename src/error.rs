@@ -103,6 +103,11 @@ pub enum PerfError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Tracepoint error: {source}")]
+    Tracepoint {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, PerfError>;

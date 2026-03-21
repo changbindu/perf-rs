@@ -9,13 +9,16 @@ use perf_event::events::Event;
 // Re-export event types from perf_event crate
 pub use perf_event::events::{Cache, CacheId, CacheOp, CacheResult, Hardware, Raw, Software};
 
-/// A unified event type that can be hardware, software, cache, or raw events.
+use crate::tracepoint::TracepointId;
+
+/// A unified event type that can be hardware, software, cache, raw, or tracepoint events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerfEvent {
     Hardware(Hardware),
     Software(Software),
     Cache(Cache),
     Raw(Raw),
+    Tracepoint(TracepointId),
 }
 
 impl Event for PerfEvent {
@@ -25,6 +28,9 @@ impl Event for PerfEvent {
             PerfEvent::Software(s) => s.update_attrs(attr),
             PerfEvent::Cache(c) => c.update_attrs(attr),
             PerfEvent::Raw(r) => r.update_attrs(attr),
+            PerfEvent::Tracepoint(t) => {
+                perf_event::events::Tracepoint::with_id(t.id).update_attrs(attr)
+            }
         }
     }
 }
@@ -45,6 +51,10 @@ impl PerfEvent {
     pub fn is_raw(&self) -> bool {
         matches!(self, PerfEvent::Raw(_))
     }
+
+    pub fn is_tracepoint(&self) -> bool {
+        matches!(self, PerfEvent::Tracepoint(_))
+    }
 }
 
 /// Parse an event name string to a PerfEvent.
@@ -54,6 +64,7 @@ impl PerfEvent {
 /// - Software events (cpu-clock, task-clock, page-faults, etc.)
 /// - Cache events (L1-dcache-loads, L1-dcache-misses, etc.)
 /// - Raw events (rNNNN where NNNN is a hex config value)
+/// - Tracepoint events (subsystem:name format, e.g., sched:sched_switch)
 ///
 /// # Errors
 ///
@@ -80,6 +91,11 @@ pub fn parse_event(name: &str) -> Result<PerfEvent> {
 
     // Try cache events
     if let Some(event) = parse_cache_event(&name_lower) {
+        return Ok(event);
+    }
+
+    // Try tracepoint events (subsystem:name format)
+    if let Some(event) = parse_tracepoint_event(name)? {
         return Ok(event);
     }
 
@@ -261,6 +277,38 @@ fn parse_cache_op_and_result(remainder: &str) -> Option<(CacheOp, CacheResult)> 
     }
 }
 
+/// Parse a tracepoint event in subsystem:name format.
+///
+/// Format: `subsystem:name` where subsystem is the tracepoint category
+/// (e.g., "sched", "syscalls", "irq") and name is the specific tracepoint.
+///
+/// # Examples
+/// - `sched:sched_switch`
+/// - `syscalls:sys_enter_openat`
+/// - `irq:irq_handler_entry`
+fn parse_tracepoint_event(name: &str) -> Result<Option<PerfEvent>> {
+    if !name.contains(':') {
+        return Ok(None);
+    }
+
+    let parts: Vec<&str> = name.splitn(2, ':').collect();
+    if parts.len() != 2 {
+        return Ok(None);
+    }
+
+    let subsystem = parts[0];
+    let tp_name = parts[1];
+
+    if subsystem.is_empty() || tp_name.is_empty() {
+        return Ok(None);
+    }
+
+    match TracepointId::from_name(subsystem, tp_name) {
+        Ok(tp) => Ok(Some(PerfEvent::Tracepoint(tp))),
+        Err(e) => Err(anyhow::Error::msg(e.to_string())),
+    }
+}
+
 /// Format a PerfEvent to a human-readable name.
 pub fn format_event_name(event: &PerfEvent) -> String {
     match event {
@@ -268,6 +316,7 @@ pub fn format_event_name(event: &PerfEvent) -> String {
         PerfEvent::Software(s) => format_software_name(*s),
         PerfEvent::Cache(c) => format_cache_name(c.clone()),
         PerfEvent::Raw(r) => format!("r{:x}", r.config),
+        PerfEvent::Tracepoint(t) => t.full_name(),
     }
 }
 
@@ -475,5 +524,88 @@ mod tests {
             "L1-dcache-loads"
         );
         assert_eq!(format_event_name(&PerfEvent::Raw(Raw::new(0x1a8))), "r1a8");
+    }
+
+    // Tracepoint parsing tests
+
+    #[test]
+    fn test_parse_tracepoint_empty_string_returns_error() {
+        let result = parse_event("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_tracepoint_no_colon_returns_error() {
+        let result = parse_event("sched_switch");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_tracepoint_empty_subsystem_returns_error() {
+        let result = parse_event(":sched_switch");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_tracepoint_empty_name_returns_error() {
+        let result = parse_event("sched:");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_tracepoint_invalid_tracepoint_returns_error() {
+        let result = parse_event("invalid:nonexistent_tracepoint");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("not found") || err_msg.contains("tracefs"));
+    }
+
+    #[test]
+    fn test_parse_tracepoint_whitespace_handling() {
+        let result = parse_event("  sched:sched_switch  ");
+        // This will either succeed (if tracepoint exists) or fail with tracepoint error
+        // The key test is that whitespace is trimmed
+        match result {
+            Ok(PerfEvent::Tracepoint(tp)) => {
+                assert_eq!(tp.subsystem, "sched");
+                assert_eq!(tp.name, "sched_switch");
+            }
+            Ok(_) => panic!("Expected Tracepoint variant"),
+            Err(e) => {
+                // Should be a tracepoint error, not a parsing error
+                let err_msg = e.to_string();
+                assert!(
+                    err_msg.contains("not found")
+                        || err_msg.contains("tracefs")
+                        || err_msg.contains("Permission"),
+                    "Unexpected error: {}",
+                    err_msg
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_is_tracepoint_method() {
+        let tp = TracepointId::new("sched", "sched_switch", 123);
+        let event = PerfEvent::Tracepoint(tp);
+        assert!(event.is_tracepoint());
+        assert!(!event.is_hardware());
+        assert!(!event.is_software());
+    }
+
+    #[test]
+    fn test_format_tracepoint_event_name() {
+        let tp = TracepointId::new("sched", "sched_switch", 123);
+        let event = PerfEvent::Tracepoint(tp);
+        assert_eq!(format_event_name(&event), "sched:sched_switch");
+    }
+
+    #[test]
+    fn test_tracepoint_event_clone_eq() {
+        let tp1 = TracepointId::new("irq", "irq_handler_entry", 456);
+        let event1 = PerfEvent::Tracepoint(tp1);
+        let event2 = event1.clone();
+        assert_eq!(event1, event2);
     }
 }

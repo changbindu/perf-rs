@@ -6,6 +6,7 @@ mod error;
 mod events;
 mod pager;
 mod symbols;
+mod tracepoint;
 
 use anyhow::{Context, Result};
 use clap::Parser;
