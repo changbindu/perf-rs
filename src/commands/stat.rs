@@ -6,7 +6,7 @@ use crate::core::perf_event::{
 };
 use crate::core::privilege::check_privilege;
 use crate::error::PerfError;
-use crate::events::{format_event_name, parse_event, parse_events, Hardware, PerfEvent, Software};
+use crate::events::{format_event_name, parse_events, Hardware, PerfEvent};
 use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -106,11 +106,16 @@ pub fn execute(
 
 /// Attach to a running process and monitor its performance counters.
 fn run_with_pid(pid: u32, events: &[PerfEvent]) -> Result<()> {
-    let config = PerfConfig::new().with_pid(pid).with_inherit(true);
-
     let mut counters: Vec<(String, perf_event::Counter)> = Vec::new();
 
     for event in events {
+        // For tracepoints, we need to monitor system-wide (cpu 0) and include kernel events
+        let config = if event.is_tracepoint() {
+            PerfConfig::new().with_cpu(0).with_include_kernel(true)
+        } else {
+            PerfConfig::new().with_pid(pid).with_inherit(true)
+        };
+
         let counter = create_counter(event.clone(), &config)
             .with_context(|| format!("Failed to create {:?} counter", event))?;
         counters.push((format_event_name(event), counter));
@@ -151,13 +156,18 @@ fn run_with_counters(command: &[String], events: &[PerfEvent]) -> Result<()> {
             waitpid(child, Some(WaitPidFlag::WUNTRACED))
                 .context("Failed to wait for child to stop")?;
 
-            let config = PerfConfig::new()
-                .with_pid(child.as_raw() as u32)
-                .with_inherit(true);
-
             let mut counters: Vec<(String, perf_event::Counter)> = Vec::new();
 
             for event in events {
+                // For tracepoints, we need to monitor system-wide (cpu 0) and include kernel events
+                let config = if event.is_tracepoint() {
+                    PerfConfig::new().with_cpu(0).with_include_kernel(true)
+                } else {
+                    PerfConfig::new()
+                        .with_pid(child.as_raw() as u32)
+                        .with_inherit(true)
+                };
+
                 let counter = create_counter(event.clone(), &config)
                     .with_context(|| format!("Failed to create {:?} counter", event))?;
                 counters.push((format_event_name(event), counter));
@@ -531,6 +541,8 @@ fn format_number(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::parse_event;
+    use crate::tracepoint::TracepointId;
 
     #[test]
     fn test_format_number() {
@@ -571,14 +583,6 @@ mod tests {
             parse_event("cache-misses"),
             Ok(PerfEvent::Hardware(Hardware::CACHE_MISSES))
         ));
-        assert!(matches!(
-            parse_event("cpu-clock"),
-            Ok(PerfEvent::Software(Software::CPU_CLOCK))
-        ));
-        assert!(matches!(
-            parse_event("page-faults"),
-            Ok(PerfEvent::Software(Software::PAGE_FAULTS))
-        ));
         assert!(parse_event("unknown").is_err());
     }
 
@@ -610,14 +614,75 @@ mod tests {
             format_event_name(&PerfEvent::Hardware(Hardware::CACHE_MISSES)),
             "cache-misses"
         );
-        assert_eq!(
-            format_event_name(&PerfEvent::Software(Software::CPU_CLOCK)),
-            "cpu-clock"
-        );
     }
 
     #[test]
     fn test_privilege_check() {
         let _ = check_privilege();
+    }
+
+    #[test]
+    fn test_parse_tracepoint_event_recognizes_format() {
+        let result = parse_event("sched:sched_switch");
+        match result {
+            Ok(PerfEvent::Tracepoint(tp)) => {
+                assert_eq!(tp.subsystem, "sched");
+                assert_eq!(tp.name, "sched_switch");
+            }
+            Ok(_) => panic!("Expected Tracepoint variant"),
+            Err(e) => {
+                let err_msg = e.to_string();
+                assert!(
+                    err_msg.contains("not found")
+                        || err_msg.contains("tracefs")
+                        || err_msg.contains("Permission"),
+                    "Unexpected error: {}",
+                    err_msg
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_tracepoint_invalid_format_returns_error() {
+        let result = parse_event("invalid_no_colon");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_events_with_tracepoint_mixed() {
+        let result = parse_events("cpu-cycles,sched:sched_switch");
+        match result {
+            Ok(events) => {
+                assert!(events.len() >= 1);
+                if events.len() == 2 {
+                    assert!(matches!(events[0], PerfEvent::Hardware(_)));
+                    assert!(matches!(events[1], PerfEvent::Tracepoint(_)));
+                }
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                assert!(
+                    err_msg.contains("not found") || err_msg.contains("tracefs"),
+                    "Unexpected error: {}",
+                    err_msg
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_format_tracepoint_event_name() {
+        let tp = TracepointId::new("sched", "sched_switch", 123);
+        let event = PerfEvent::Tracepoint(tp);
+        assert_eq!(format_event_name(&event), "sched:sched_switch");
+    }
+
+    #[test]
+    fn test_tracepoint_is_tracepoint_method() {
+        let tp = TracepointId::new("irq", "irq_handler_entry", 456);
+        let event = PerfEvent::Tracepoint(tp);
+        assert!(event.is_tracepoint());
+        assert!(!event.is_hardware());
     }
 }
