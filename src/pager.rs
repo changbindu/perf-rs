@@ -222,6 +222,9 @@ mod tests {
     use super::*;
     use std::env;
     use std::io::IsTerminal;
+    use std::sync::Mutex;
+
+    static PAGER_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     // Helper to check if a command exists in PATH
     fn command_exists(cmd: &str) -> bool {
@@ -234,13 +237,11 @@ mod tests {
 
     #[test]
     fn test_pager_detect_with_pager_env() {
-        // Save original PAGER value
+        let _lock = PAGER_TEST_MUTEX.lock().unwrap();
         let original_pager = env::var("PAGER").ok();
 
-        // Set PAGER to a known value
         env::set_var("PAGER", "less");
 
-        // detect() should find the pager from $PAGER
         let result = Pager::detect();
         assert!(
             result.is_some(),
@@ -253,7 +254,6 @@ mod tests {
             "detected pager should be 'less' when $PAGER=less"
         );
 
-        // Restore original PAGER value
         if let Some(val) = original_pager {
             env::set_var("PAGER", val);
         } else {
@@ -263,16 +263,13 @@ mod tests {
 
     #[test]
     fn test_pager_detect_without_pager_env_finds_less() {
-        // Save original PAGER value
+        let _lock = PAGER_TEST_MUTEX.lock().unwrap();
         let original_pager = env::var("PAGER").ok();
 
-        // Remove PAGER env var
         env::remove_var("PAGER");
 
-        // detect() should find 'less' as fallback
         let result = Pager::detect();
 
-        // If 'less' exists on system, it should be found
         if command_exists("less") {
             assert!(
                 result.is_some(),
@@ -285,7 +282,6 @@ mod tests {
             );
         }
 
-        // Restore original PAGER value
         if let Some(val) = original_pager {
             env::set_var("PAGER", val);
         } else {
@@ -295,18 +291,12 @@ mod tests {
 
     #[test]
     fn test_pager_detect_finds_more_as_fallback() {
-        // This test verifies that 'more' is found if 'less' is not available
-        // We can't easily test this without manipulating PATH, so we test
-        // that the detection order is correct by checking the implementation
-        // would find 'more' if 'less' were not found
-
-        // Save original PAGER value
+        let _lock = PAGER_TEST_MUTEX.lock().unwrap();
         let original_pager = env::var("PAGER").ok();
         env::remove_var("PAGER");
 
         let result = Pager::detect();
 
-        // At minimum, one of less/more/most should be found on a typical system
         if command_exists("less") || command_exists("more") || command_exists("most") {
             assert!(
                 result.is_some(),
@@ -314,7 +304,6 @@ mod tests {
             );
         }
 
-        // Restore original PAGER value
         if let Some(val) = original_pager {
             env::set_var("PAGER", val);
         } else {
@@ -364,21 +353,18 @@ mod tests {
 
     #[test]
     fn test_pager_spawn_returns_writer() {
-        // Save original PAGER value
+        let _lock = PAGER_TEST_MUTEX.lock().unwrap();
         let original_pager = env::var("PAGER").ok();
-        env::set_var("PAGER", "cat"); // Use 'cat' as a simple pager for testing
+        env::set_var("PAGER", "cat");
 
         let pager = Pager::new();
 
-        // spawn() should return a Box<dyn Write>
-        // STUB: Currently returns error
         let result = pager.spawn();
         assert!(
             result.is_ok(),
             "spawn() should succeed when pager is available"
         );
 
-        // Restore original PAGER value
         if let Some(val) = original_pager {
             env::set_var("PAGER", val);
         } else {
@@ -388,13 +374,11 @@ mod tests {
 
     #[test]
     fn test_pager_spawn_fails_without_pager() {
-        // Create a pager with no pager command
         let pager = Pager {
             pager_cmd: None,
             is_tty: true,
         };
 
-        // spawn() should fail when no pager is available
         let result = pager.spawn();
         assert!(
             result.is_err(),
@@ -412,14 +396,12 @@ mod tests {
 
     #[test]
     fn test_pager_should_use_pager_when_tty_and_pager_available() {
-        // Save original PAGER value
+        let _lock = PAGER_TEST_MUTEX.lock().unwrap();
         let original_pager = env::var("PAGER").ok();
         env::set_var("PAGER", "cat");
 
         let pager = Pager::new();
 
-        // If TTY and pager available, should_use_pager should return true
-        // STUB: Currently always returns false
         if pager.is_tty && pager.pager_cmd.is_some() {
             assert!(
                 pager.should_use_pager(),
@@ -427,7 +409,6 @@ mod tests {
             );
         }
 
-        // Restore original PAGER value
         if let Some(val) = original_pager {
             env::set_var("PAGER", val);
         } else {
@@ -508,6 +489,7 @@ mod tests {
 
     #[test]
     fn test_find_pager_with_pager_env() {
+        let _lock = PAGER_TEST_MUTEX.lock().unwrap();
         let original_pager = env::var("PAGER").ok();
         env::set_var("PAGER", "less");
 
@@ -532,6 +514,7 @@ mod tests {
 
     #[test]
     fn test_find_pager_without_env() {
+        let _lock = PAGER_TEST_MUTEX.lock().unwrap();
         let original_pager = env::var("PAGER").ok();
         env::remove_var("PAGER");
 
@@ -553,6 +536,7 @@ mod tests {
 
     #[test]
     fn test_find_pager_returns_same_as_detect() {
+        let _lock = PAGER_TEST_MUTEX.lock().unwrap();
         let original_pager = env::var("PAGER").ok();
         env::set_var("PAGER", "less");
 
