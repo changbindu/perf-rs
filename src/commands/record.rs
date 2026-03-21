@@ -19,11 +19,22 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
 }
 
+/// Get the effective sample period for an event.
+/// Tracepoints use period=1 to capture every occurrence.
+fn effective_sample_period(event: &PerfEvent, sample_period: u64) -> u64 {
+    if matches!(event, PerfEvent::Tracepoint(_)) {
+        1
+    } else {
+        sample_period
+    }
+}
+
 /// Convert a PerfEvent to PerfEventAttr for Linux perf format
 fn event_to_attr(event: &PerfEvent, sample_period: u64, callchain: bool) -> PerfEventAttr {
     let (attr_type, config) = match event {
         PerfEvent::Hardware(h) => (0u32, u64::from(*h)),
         PerfEvent::Software(s) => (1u32, u64::from(*s)),
+        PerfEvent::Tracepoint(t) => (2u32, t.id),
         PerfEvent::Cache(c) => {
             let config =
                 c.which.0 as u64 | ((c.operation.0 as u64) << 8) | ((c.result.0 as u64) << 16);
@@ -31,6 +42,8 @@ fn event_to_attr(event: &PerfEvent, sample_period: u64, callchain: bool) -> Perf
         }
         PerfEvent::Raw(r) => (4u32, r.config),
     };
+
+    let effective_period = effective_sample_period(event, sample_period);
 
     let mut sample_type = crate::core::perf_data::PERF_SAMPLE_IP
         | crate::core::perf_data::PERF_SAMPLE_TID
@@ -42,7 +55,7 @@ fn event_to_attr(event: &PerfEvent, sample_period: u64, callchain: bool) -> Perf
     }
 
     PerfEventAttr::new(attr_type, config, sample_type)
-        .with_sample_period(sample_period)
+        .with_sample_period(effective_period)
         .with_comm(true)
         .with_mmap(true)
 }
@@ -220,14 +233,19 @@ fn record_with_pid(
 
     let attr = event_to_attr(&event, sample_period, callchain);
     let sample_type = attr.sample_type;
+    let effective_period = effective_sample_period(&event, sample_period);
+
+    // For tracepoints, we need to specify a CPU (pid=-1 with cpu=-1 is invalid)
+    let cpu = if event.is_tracepoint() { Some(0) } else { None };
 
     let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
         event,
         pid as i32,
-        sample_period,
+        effective_period,
         false,
         callchain,
         max_stack,
+        cpu,
     )
     .context("Failed to create ring buffer")?;
 
@@ -252,7 +270,7 @@ fn record_with_pid(
         }
 
         while let Some(record) = ringbuf.next_record() {
-            if let Some(sample) = parse_sample_record(&record, sample_period, sample_type) {
+            if let Some(sample) = parse_sample_record(&record, effective_period, sample_type) {
                 writer
                     .write_sample(&sample)
                     .context("Failed to write sample")?;
@@ -301,14 +319,19 @@ fn record_with_command(
 
             let attr = event_to_attr(&event, sample_period, callchain);
             let sample_type = attr.sample_type;
+            let effective_period = effective_sample_period(&event, sample_period);
+
+            // For tracepoints, we need to specify a CPU (pid=-1 with cpu=-1 is invalid)
+            let cpu = if event.is_tracepoint() { Some(0) } else { None };
 
             let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
                 event,
                 child.as_raw(),
-                sample_period,
+                effective_period,
                 false,
                 callchain,
                 max_stack,
+                cpu,
             )
             .context("Failed to create ring buffer")?;
 
@@ -344,7 +367,9 @@ fn record_with_command(
                 }
 
                 while let Some(record) = ringbuf.next_record() {
-                    if let Some(sample) = parse_sample_record(&record, sample_period, sample_type) {
+                    if let Some(sample) =
+                        parse_sample_record(&record, effective_period, sample_type)
+                    {
                         writer
                             .write_sample(&sample)
                             .context("Failed to write sample")?;
@@ -460,13 +485,14 @@ fn record_system_wide(
 
     let attr = event_to_attr(&event, sample_period, callchain);
     let sample_type = attr.sample_type;
+    let effective_period = effective_sample_period(&event, sample_period);
 
     let mut ringbufs = Vec::with_capacity(cpus.len());
     for &cpu in &cpus {
         let ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_cpu(
             event.clone(),
             cpu,
-            sample_period,
+            effective_period,
             false,
             callchain,
             max_stack,
@@ -501,7 +527,7 @@ fn record_system_wide(
     while !SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
         for (_cpu, ringbuf) in &mut ringbufs {
             while let Some(record) = ringbuf.next_record() {
-                if let Some(sample) = parse_sample_record(&record, sample_period, sample_type) {
+                if let Some(sample) = parse_sample_record(&record, effective_period, sample_type) {
                     let process_key = (sample.pid, sample.tid);
                     if seen_processes.insert(process_key) {
                         if let Err(e) = write_process_events(&mut writer, sample.pid, sample.tid) {
