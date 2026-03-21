@@ -50,18 +50,33 @@ impl RingBuffer {
         inherit: bool,
         callchain: bool,
         max_stack: u16,
+        cpu: Option<u32>,
     ) -> Result<Self> {
         let config = RingBufferConfig::default();
 
         let builder = &mut Builder::new(event);
-        builder
-            .observe_pid(pid)
-            .any_cpu()
-            .sample_period(sample_period)
-            .inherit(inherit)
-            .sample(SampleFlag::IP)
-            .sample(SampleFlag::TID)
-            .sample(SampleFlag::TIME);
+
+        if let Some(cpu_id) = cpu {
+            builder
+                .observe_pid(-1)
+                .one_cpu(cpu_id as usize)
+                .sample_period(sample_period)
+                .inherit(inherit)
+                .exclude_kernel(false)
+                .sample(SampleFlag::IP)
+                .sample(SampleFlag::TID)
+                .sample(SampleFlag::TIME)
+                .sample(SampleFlag::CPU);
+        } else {
+            builder
+                .observe_pid(pid)
+                .any_cpu()
+                .sample_period(sample_period)
+                .inherit(inherit)
+                .sample(SampleFlag::IP)
+                .sample(SampleFlag::TID)
+                .sample(SampleFlag::TIME);
+        }
 
         if callchain {
             builder.sample(SampleFlag::CALLCHAIN);
@@ -127,6 +142,7 @@ impl RingBuffer {
             .one_cpu(cpu as usize)
             .sample_period(sample_period)
             .enable_on_exec(enable_on_exec)
+            .exclude_kernel(false)
             .sample(SampleFlag::IP)
             .sample(SampleFlag::TID)
             .sample(SampleFlag::TIME)

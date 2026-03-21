@@ -49,6 +49,11 @@ impl PerfConfig {
         self.inherit = inherit;
         self
     }
+
+    pub fn with_include_kernel(mut self, include_kernel: bool) -> Self {
+        self.include_kernel = include_kernel;
+        self
+    }
 }
 
 pub fn create_counter<E: Event + Clone + 'static>(
@@ -57,11 +62,12 @@ pub fn create_counter<E: Event + Clone + 'static>(
 ) -> Result<Counter> {
     let mut builder = Builder::new(event);
 
-    if let Some(pid) = config.pid {
-        builder.observe_pid(pid as i32);
-    } else {
-        builder.observe_self();
-    }
+    // For system-wide monitoring (cpu specified without pid), use observe_pid(-1)
+    match (&config.pid, &config.cpu) {
+        (Some(pid), _) => builder.observe_pid(*pid as i32),
+        (None, Some(_)) => builder.observe_pid(-1),
+        (None, None) => builder.observe_self(),
+    };
 
     if let Some(cpu) = config.cpu {
         builder.one_cpu(cpu as usize);
