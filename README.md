@@ -100,6 +100,12 @@ sudo perf-rs stat --pid 1234 --event cache-misses
 
 # Count multiple events
 sudo perf-rs stat --event cpu-cycles,instructions,cache-references,cache-misses -- ./benchmark
+
+# Count tracepoint events (requires root for tracefs access)
+sudo perf-rs stat --event sched:sched_switch -- ls
+
+# Count multiple tracepoints
+sudo perf-rs stat --event sched:sched_switch,sched:sched_process_fork -- ./your_program
 ```
 
 ### Record Performance Samples
@@ -121,6 +127,12 @@ sudo perf-rs record --pid 1234 --frequency 99
 
 # Specify output file
 sudo perf-rs record --output custom.data --frequency 99 -- ./your_program
+
+# Record tracepoint events (requires root for tracefs access)
+sudo perf-rs record --event sched:sched_switch -- ./your_program
+
+# Record scheduler tracepoints
+sudo perf-rs record --event sched:sched_switch,sched:sched_process_exec -- ./your_program
 ```
 
 ### Analyze Recorded Data
@@ -245,7 +257,6 @@ perf-rs compare baseline.data perf.data --threshold 10%
 ### Where Linux perf Excels
 
 Linux perf remains superior for:
-- Tracepoint and ftrace integration
 - BPF/eBPF program support
 - All Linux architecture support
 - Kernel developer workflows
@@ -277,7 +288,6 @@ perf-rs targets a different use case than Linux perf:
 ### Limitations vs Linux perf
 
 - Fewer supported architectures (3 vs 20+)
-- Limited tracepoint support (planned)
 - No BPF/eBPF program support (not planned)
 - Fewer commands (5 vs 22)
 
@@ -318,7 +328,7 @@ perf-rs targets a different use case than Linux perf:
 | Software events | ✅ Complete | cpu-clock, task-clock, page-faults, context-switches, cpu-migrations, minor/major-faults, bpf-output |
 | Cache events | ✅ Complete | L1-dcache, L1-icache, LLC, dTLB, iTLB, branch, node (all variants) |
 | Raw events | ✅ Complete | rNNNN format for architecture-specific PMU events |
-| Tracepoint events | ❌ Planned | syscalls, sched, irq, timer, net, etc. |
+| Tracepoint events | ✅ Complete | syscalls, sched, irq, timer, net, etc. (format: subsystem:event) |
 | kprobes | ❌ Planned | Kernel dynamic tracepoints |
 | uprobes | ❌ Planned | Userspace dynamic tracepoints |
 
@@ -476,7 +486,6 @@ Scale to clusters and pipelines:
 
 These Linux perf features are planned but secondary to differentiation:
 
-- **Tracepoint Support** - Parse `/sys/kernel/debug/tracing/events/`
 - **Event Modifiers** - `:u`, `:k`, `:p` modifiers
 - **Live Monitoring** - `perf top` command
 - **TUI Interface** - Interactive report viewer
