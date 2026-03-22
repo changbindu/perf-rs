@@ -4,8 +4,9 @@
 //! sample events in a human-readable format with symbol resolution.
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 
@@ -15,13 +16,17 @@ use crate::core::perf_data::{
 use crate::pager::Pager;
 use crate::symbols::{MultiResolver, SymbolInfo, SymbolResolver};
 
+static TRACEPOINT_CACHE: OnceLock<HashMap<u64, String>> = OnceLock::new();
+
 const PERF_TYPE_HARDWARE: u32 = 0;
 const PERF_TYPE_SOFTWARE: u32 = 1;
 const PERF_TYPE_TRACEPOINT: u32 = 2;
 const PERF_TYPE_HW_CACHE: u32 = 3;
 const PERF_TYPE_RAW: u32 = 4;
 
-fn lookup_tracepoint_name(id: u64) -> Option<String> {
+fn build_tracepoint_cache() -> HashMap<u64, String> {
+    let mut cache = HashMap::new();
+
     let tracefs_paths = [
         "/sys/kernel/tracing/events",
         "/sys/kernel/debug/tracing/events",
@@ -38,20 +43,22 @@ fn lookup_tracepoint_name(id: u64) -> Option<String> {
                 if !subsystem_path.is_dir() {
                     continue;
                 }
-                if let Ok(event_entries) = std::fs::read_dir(&subsystem_path) {
-                    for event_entry in event_entries.flatten() {
-                        let id_path = event_entry.path().join("id");
-                        if id_path.exists() {
-                            if let Ok(id_str) = std::fs::read_to_string(&id_path) {
-                                if let Ok(event_id) = id_str.trim().parse::<u64>() {
-                                    if event_id == id {
-                                        let subsystem = subsystem_path
-                                            .file_name()
-                                            .map(|s| s.to_string_lossy().into_owned());
-                                        let event =
-                                            event_entry.file_name().to_string_lossy().into_owned();
-                                        if let Some(s) = subsystem {
-                                            return Some(format!("{}:{}", s, event));
+                if let Some(subsystem) = subsystem_path.file_name() {
+                    if let Ok(event_entries) = std::fs::read_dir(&subsystem_path) {
+                        for event_entry in event_entries.flatten() {
+                            let id_path = event_entry.path().join("id");
+                            if id_path.exists() {
+                                if let Ok(id_str) = std::fs::read_to_string(&id_path) {
+                                    if let Ok(event_id) = id_str.trim().parse::<u64>() {
+                                        if let Some(event_name) = event_entry.path().file_name() {
+                                            cache.insert(
+                                                event_id,
+                                                format!(
+                                                    "{}:{}",
+                                                    subsystem.to_string_lossy(),
+                                                    event_name.to_string_lossy()
+                                                ),
+                                            );
                                         }
                                     }
                                 }
@@ -62,7 +69,13 @@ fn lookup_tracepoint_name(id: u64) -> Option<String> {
             }
         }
     }
-    None
+
+    cache
+}
+
+fn lookup_tracepoint_name(id: u64) -> Option<String> {
+    let cache = TRACEPOINT_CACHE.get_or_init(build_tracepoint_cache);
+    cache.get(&id).cloned()
 }
 
 fn attr_to_event_name(attr: &PerfEventAttr) -> String {
@@ -120,11 +133,32 @@ fn format_symbol_with_source(info: &SymbolInfo, addr: u64) -> String {
     }
 }
 
+type SymbolCache = HashMap<u64, Option<SymbolInfo>>;
+
+/// Resolve an address with caching.
+fn resolve_cached(
+    addr: u64,
+    resolver: &MultiResolver,
+    cache: &mut SymbolCache,
+) -> Option<SymbolInfo> {
+    if let Some(cached) = cache.get(&addr) {
+        return cached.clone();
+    }
+
+    let result = resolver.resolve(addr).ok().flatten();
+    cache.insert(addr, result.clone());
+    result
+}
+
 /// Resolve an address and format it with symbol info or fallback to hex.
-fn resolve_and_format(addr: u64, resolver: &MultiResolver) -> String {
-    match resolver.resolve(addr) {
-        Ok(Some(sym)) => format_symbol_with_source(&sym, addr),
-        _ => format!("0x{:016x}", addr),
+fn resolve_and_format_cached(
+    addr: u64,
+    resolver: &MultiResolver,
+    cache: &mut SymbolCache,
+) -> String {
+    match resolve_cached(addr, resolver, cache) {
+        Some(sym) => format_symbol_with_source(&sym, addr),
+        None => format!("0x{:016x}", addr),
     }
 }
 
@@ -153,7 +187,6 @@ pub fn execute(
     let mut reader = PerfDataReader::from_path(input_path)
         .with_context(|| format!("Failed to open {}", input_path))?;
 
-    // Get event name from attrs (use first attr for now - we only support single event)
     let event_name = reader
         .attrs()
         .first()
@@ -198,15 +231,15 @@ pub fn execute(
         }
     }
 
-    // Determine if we should use a pager
+    let mut symbol_cache: SymbolCache = HashMap::new();
+
     let pager = Pager::new();
     let use_pager = !no_pager && pager.should_use_pager();
 
-    // Create output writer - either pager or stdout
     let mut output: Box<dyn Write> = if use_pager {
         pager.spawn().context("Failed to spawn pager")?
     } else {
-        Box::new(std::io::stdout())
+        Box::new(BufWriter::new(std::io::stdout()))
     };
 
     for event in &events {
@@ -216,6 +249,7 @@ pub fn execute(
                     sample,
                     &comm_map,
                     &resolver,
+                    &mut symbol_cache,
                     show_callchain,
                     &event_name,
                     &mut output,
@@ -231,7 +265,6 @@ pub fn execute(
         }
     }
 
-    // Flush output before pager is dropped (which waits for child to finish)
     output.flush().context("Failed to flush output")?;
 
     Ok(())
@@ -244,6 +277,7 @@ fn display_sample<W: Write>(
     sample: &SampleEvent,
     comm_map: &HashMap<u32, String>,
     resolver: &MultiResolver,
+    symbol_cache: &mut SymbolCache,
     show_callchain: bool,
     event_name: &str,
     output: &mut W,
@@ -255,7 +289,7 @@ fn display_sample<W: Write>(
         .unwrap_or_else(|| format!(":{}", sample.pid));
 
     let timestamp = format_timestamp(sample.time);
-    let symbol = resolve_and_format(sample.ip, resolver);
+    let symbol = resolve_and_format_cached(sample.ip, resolver, symbol_cache);
 
     writeln!(
         output,
@@ -266,7 +300,7 @@ fn display_sample<W: Write>(
     if show_callchain {
         if let Some(ref cc) = sample.callchain {
             for &addr in cc {
-                let func = resolve_and_format(addr, resolver);
+                let func = resolve_and_format_cached(addr, resolver, symbol_cache);
                 writeln!(output, "\t{}", func)?;
             }
         }
@@ -344,7 +378,8 @@ mod tests {
     #[test]
     fn test_resolve_and_format_no_resolver() {
         let resolver = MultiResolver::new();
-        let result = resolve_and_format(0xdeadbeef, &resolver);
+        let mut cache = HashMap::new();
+        let result = resolve_and_format_cached(0xdeadbeef, &resolver, &mut cache);
         assert_eq!(result, "0x00000000deadbeef");
     }
 }
