@@ -775,12 +775,19 @@ impl SampleEvent {
         let start_pos = reader.stream_position().unwrap_or(0);
         let payload_size = header.size as usize - PERF_EVENT_HEADER_SIZE as usize;
 
+        let mut event_id = 0u64;
         let mut ip = 0u64;
         let mut pid = 0u32;
         let mut tid = 0u32;
         let mut time = 0u64;
         let mut period = 0u64;
         let mut callchain = None;
+
+        // PERF_SAMPLE_IDENTIFIER (bit 16) must be read FIRST
+        // This field comes before all others in the kernel's sample record layout
+        if sample_type & PERF_SAMPLE_IDENTIFIER != 0 {
+            event_id = reader.read_u64::<LittleEndian>()?;
+        }
 
         if sample_type & PERF_SAMPLE_IP != 0 {
             ip = reader.read_u64::<LittleEndian>()?;
@@ -824,7 +831,7 @@ impl SampleEvent {
         Ok(Self {
             header,
             sample_type,
-            event_id: 0,
+            event_id,
             ip,
             pid,
             tid,
@@ -1657,6 +1664,76 @@ mod tests {
         assert_eq!(read_sample.tid, 0);
         assert_eq!(read_sample.time, 0);
         assert_eq!(read_sample.period, 0);
+    }
+
+    #[test]
+    fn test_sample_event_with_identifier() {
+        let sample_type = PERF_SAMPLE_IDENTIFIER
+            | PERF_SAMPLE_IP
+            | PERF_SAMPLE_TID
+            | PERF_SAMPLE_TIME
+            | PERF_SAMPLE_PERIOD;
+        let sample = SampleEvent::new(
+            sample_type,
+            1234567890,
+            0x7f0000001000,
+            1234,
+            5678,
+            1000,
+            None,
+            None,
+            2048,
+        );
+
+        let mut buffer = Vec::new();
+        sample.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let read_sample = SampleEvent::read_from(&mut cursor, sample_type).unwrap();
+
+        assert_eq!(read_sample.event_id, 2048);
+        assert_eq!(read_sample.ip, 0x7f0000001000);
+        assert_eq!(read_sample.pid, 1234);
+        assert_eq!(read_sample.tid, 5678);
+        assert_eq!(read_sample.time, 1234567890);
+        assert_eq!(read_sample.period, 1000);
+    }
+
+    #[test]
+    fn test_sample_event_with_identifier_and_callchain() {
+        let callchain = vec![0x7f0000001000, 0x7f0000002000];
+        let sample_type = PERF_SAMPLE_IDENTIFIER
+            | PERF_SAMPLE_IP
+            | PERF_SAMPLE_TID
+            | PERF_SAMPLE_TIME
+            | PERF_SAMPLE_PERIOD
+            | PERF_SAMPLE_CALLCHAIN;
+        let sample = SampleEvent::new(
+            sample_type,
+            999999,
+            0x7f0000001000,
+            100,
+            200,
+            500,
+            Some(callchain.clone()),
+            None,
+            4096,
+        );
+
+        let mut buffer = Vec::new();
+        sample.write_to(&mut buffer).unwrap();
+
+        let mut cursor = Cursor::new(buffer);
+        let read_sample = SampleEvent::read_from(&mut cursor, sample_type).unwrap();
+
+        assert_eq!(read_sample.event_id, 4096);
+        assert_eq!(read_sample.ip, 0x7f0000001000);
+        assert_eq!(read_sample.pid, 100);
+        assert_eq!(read_sample.tid, 200);
+        assert_eq!(read_sample.time, 999999);
+        assert_eq!(read_sample.period, 500);
+        assert!(read_sample.callchain.is_some());
+        assert_eq!(read_sample.callchain.unwrap(), callchain);
     }
 
     #[test]
