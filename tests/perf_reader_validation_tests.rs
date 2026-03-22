@@ -199,6 +199,7 @@ fn test_sample_round_trip() {
         1000,
         Some(vec![0x7f0000002000, 0x7f0000003000]),
         Some(0),
+        1024,
     );
 
     let mut buffer = Cursor::new(Vec::new());
@@ -429,6 +430,7 @@ fn test_sample_with_callchain_round_trip() {
         1000,
         Some(callchain.clone()),
         Some(0),
+        1024,
     );
 
     let mut buffer = Cursor::new(Vec::new());
@@ -452,9 +454,9 @@ fn test_multiple_samples_round_trip() {
     let sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_PERIOD;
 
     let samples = vec![
-        SampleEvent::new(sample_type, 0, 0x1000, 1, 1, 100, None, Some(0)),
-        SampleEvent::new(sample_type, 0, 0x2000, 1, 1, 200, None, Some(0)),
-        SampleEvent::new(sample_type, 0, 0x3000, 1, 1, 300, None, Some(0)),
+        SampleEvent::new(sample_type, 0, 0x1000, 1, 1, 100, None, Some(0), 1024),
+        SampleEvent::new(sample_type, 0, 0x2000, 1, 1, 200, None, Some(0), 1024),
+        SampleEvent::new(sample_type, 0, 0x3000, 1, 1, 300, None, Some(0), 1024),
     ];
 
     let mut buffer = Cursor::new(Vec::new());

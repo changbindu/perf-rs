@@ -48,7 +48,8 @@ fn event_to_attr(event: &PerfEvent, sample_period: u64, callchain: bool) -> Perf
     let mut sample_type = crate::core::perf_data::PERF_SAMPLE_IP
         | crate::core::perf_data::PERF_SAMPLE_TID
         | crate::core::perf_data::PERF_SAMPLE_TIME
-        | crate::core::perf_data::PERF_SAMPLE_PERIOD;
+        | crate::core::perf_data::PERF_SAMPLE_PERIOD
+        | crate::core::perf_data::PERF_SAMPLE_IDENTIFIER;
 
     if callchain {
         sample_type |= crate::core::perf_data::PERF_SAMPLE_CALLCHAIN;
@@ -58,6 +59,7 @@ fn event_to_attr(event: &PerfEvent, sample_period: u64, callchain: bool) -> Perf
         .with_sample_period(effective_period)
         .with_comm(true)
         .with_mmap(true)
+        .with_sample_id_all(true)
 }
 
 /// Get process command name from /proc/PID/comm
@@ -270,7 +272,9 @@ fn record_with_pid(
         }
 
         while let Some(record) = ringbuf.next_record() {
-            if let Some(sample) = parse_sample_record(&record, effective_period, sample_type) {
+            if let Some(sample) =
+                parse_sample_record(&record, effective_period, sample_type, event_id)
+            {
                 writer
                     .write_sample(&sample)
                     .context("Failed to write sample")?;
@@ -368,7 +372,7 @@ fn record_with_command(
 
                 while let Some(record) = ringbuf.next_record() {
                     if let Some(sample) =
-                        parse_sample_record(&record, effective_period, sample_type)
+                        parse_sample_record(&record, effective_period, sample_type, event_id)
                     {
                         writer
                             .write_sample(&sample)
@@ -441,6 +445,7 @@ fn parse_sample_record(
     record: &perf_event::Record<'_>,
     sample_period: u64,
     sample_type: u64,
+    event_id: u64,
 ) -> Option<SampleEvent> {
     use perf_event::data::Record as DataRecord;
 
@@ -465,6 +470,7 @@ fn parse_sample_record(
                 sample_period,
                 callchain,
                 cpu,
+                event_id,
             ))
         }
         _ => None,
@@ -513,7 +519,7 @@ fn record_system_wide(
     let event_ids: Vec<u64> = cpus.iter().map(|_| generate_event_id()).collect();
 
     writer
-        .initialize(&[attr], &[event_ids])
+        .initialize(&[attr], &[event_ids.clone()])
         .context("Failed to initialize perf.data file")?;
 
     let start_time = Instant::now();
@@ -527,7 +533,9 @@ fn record_system_wide(
     while !SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
         for (_cpu, ringbuf) in &mut ringbufs {
             while let Some(record) = ringbuf.next_record() {
-                if let Some(sample) = parse_sample_record(&record, effective_period, sample_type) {
+                if let Some(sample) =
+                    parse_sample_record(&record, effective_period, sample_type, event_ids[0])
+                {
                     let process_key = (sample.pid, sample.tid);
                     if seen_processes.insert(process_key) {
                         if let Err(e) = write_process_events(&mut writer, sample.pid, sample.tid) {

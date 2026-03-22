@@ -474,7 +474,7 @@ mod tests {
             | crate::core::perf_data::PERF_SAMPLE_TIME
             | crate::core::perf_data::PERF_SAMPLE_PERIOD;
 
-        let sample = SampleEvent::new(sample_type, 100, 0x1000, 1234, 5678, 1000, None, None);
+        let sample = SampleEvent::new(sample_type, 100, 0x1000, 1234, 5678, 1000, None, None, 1024);
         graph.add_sample(&sample, &resolver);
 
         assert_eq!(graph.total_samples, 1);
@@ -510,6 +510,7 @@ mod tests {
             1000,
             Some(callchain),
             None,
+            1024,
         );
         graph.add_sample(&sample, &resolver);
 
@@ -587,7 +588,7 @@ mod tests {
             | crate::core::perf_data::PERF_SAMPLE_TIME
             | crate::core::perf_data::PERF_SAMPLE_PERIOD;
 
-        let sample1 = SampleEvent::new(sample_type, 100, 0x1000, 1234, 5678, 500, None, None);
+        let sample1 = SampleEvent::new(sample_type, 100, 0x1000, 1234, 5678, 500, None, None, 1024);
         graph.add_sample(&sample1, &resolver);
 
         let callchain = vec![0x1000, 0x2000];
@@ -604,6 +605,7 @@ mod tests {
             500,
             Some(callchain),
             None,
+            1024,
         );
         graph.add_sample(&sample2, &resolver);
 

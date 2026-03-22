@@ -20,7 +20,7 @@
 //! ```
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +30,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 const PERF_FILE_MAGIC: u64 = 0x50455246494c4532;
+const PERF_ATTR_SIZE_VER8: u64 = 136;
 
 fn run_perf_rs(args: &[&str]) -> (bool, String, String) {
     let result = Command::new("cargo")
@@ -160,6 +161,29 @@ fn perf_script(path: &PathBuf) -> Result<String, String> {
     }
 }
 
+fn verify_attr_size(path: &PathBuf) -> Result<u64, String> {
+    let mut file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+
+    file.seek(SeekFrom::Start(16))
+        .map_err(|e| format!("Failed to seek to attr_size: {}", e))?;
+
+    let mut attr_size_bytes = [0u8; 8];
+    file.read_exact(&mut attr_size_bytes)
+        .map_err(|e| format!("Failed to read attr_size: {}", e))?;
+
+    let attr_size = u64::from_le_bytes(attr_size_bytes);
+
+    let expected_attr_size = PERF_ATTR_SIZE_VER8 + 16;
+    if attr_size != expected_attr_size {
+        return Err(format!(
+            "Invalid attr_size: expected {} (attr struct + IDs section), got {}",
+            expected_attr_size, attr_size
+        ));
+    }
+
+    Ok(attr_size)
+}
+
 #[test]
 fn test_magic_number_validation() {
     if !has_perf_permission() {
@@ -184,6 +208,85 @@ fn test_magic_number_validation() {
     assert!(output_path.exists(), "Output file not created");
 
     verify_perf_data_magic(&output_path).expect("Invalid perf.data magic number");
+}
+
+#[test]
+fn test_attr_size_header_field() {
+    if !has_perf_permission() {
+        eprintln!("Skipping test: requires perf permissions");
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let output_path = temp_dir.path().join("attr_size_test.perf.data");
+
+    let (success, _stdout, stderr) = run_perf_rs(&[
+        "record",
+        "--output",
+        output_path.to_str().unwrap(),
+        "--frequency",
+        "99",
+        "--",
+        "true",
+    ]);
+
+    assert!(success, "perf-rs record failed: {}", stderr);
+    assert!(output_path.exists(), "Output file not created");
+
+    let attr_size = verify_attr_size(&output_path).expect("attr_size validation failed");
+    let expected_attr_entry_size = PERF_ATTR_SIZE_VER8 + 16;
+    assert_eq!(
+        attr_size, expected_attr_entry_size,
+        "attr_size should be {} (attr struct + IDs section), got {}",
+        expected_attr_entry_size, attr_size
+    );
+}
+
+#[test]
+fn test_callchain_recording() {
+    if !has_perf_permission() {
+        eprintln!("Skipping test: requires perf permissions");
+        return;
+    }
+
+    if !perf_available() {
+        eprintln!("Skipping test: perf tool not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let output_path = temp_dir.path().join("callchain.perf.data");
+
+    let (success, _stdout, stderr) = run_perf_rs(&[
+        "record",
+        "--output",
+        output_path.to_str().unwrap(),
+        "--call-graph",
+        "--frequency",
+        "99",
+        "--",
+        "ls",
+        "-la",
+    ]);
+
+    assert!(success, "perf-rs record with -g failed: {}", stderr);
+    assert!(output_path.exists(), "Output file not created");
+
+    verify_perf_data_magic(&output_path).expect("Invalid perf.data magic number");
+    verify_attr_size(&output_path).expect("Invalid attr_size");
+
+    let report_output = perf_report(&output_path).expect("perf report failed on callchain data");
+    eprintln!("perf report output:\n{}", report_output);
+
+    let script_output = perf_script(&output_path).expect("perf script failed on callchain data");
+    eprintln!("perf script output:\n{}", script_output);
+
+    let file_size = output_path.metadata().unwrap().len();
+    eprintln!("Callchain recording file size: {} bytes", file_size);
+    assert!(
+        file_size > 1000,
+        "File should contain samples with callchain data"
+    );
 }
 
 #[test]

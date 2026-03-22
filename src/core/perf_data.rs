@@ -483,6 +483,7 @@ pub const PERF_SAMPLE_CPU: u64 = 1 << 7;
 pub const PERF_SAMPLE_PERIOD: u64 = 1 << 8;
 pub const PERF_SAMPLE_STREAM_ID: u64 = 1 << 9;
 pub const PERF_SAMPLE_RAW: u64 = 1 << 10;
+pub const PERF_SAMPLE_IDENTIFIER: u64 = 1 << 16;
 
 /// PERF_RECORD_MMAP event (type 1)
 ///
@@ -622,6 +623,7 @@ impl CommEvent {
 pub struct SampleEvent {
     pub header: PerfEventHeader,
     pub sample_type: u64,
+    pub event_id: u64,
     pub ip: u64,
     pub pid: u32,
     pub tid: u32,
@@ -641,9 +643,13 @@ impl SampleEvent {
         period: u64,
         callchain: Option<Vec<u64>>,
         cpu: Option<u32>,
+        event_id: u64,
     ) -> Self {
         let mut size = 8u16;
 
+        if sample_type & PERF_SAMPLE_IDENTIFIER != 0 {
+            size += 8;
+        }
         if sample_type & PERF_SAMPLE_IP != 0 {
             size += 8;
         }
@@ -653,7 +659,6 @@ impl SampleEvent {
         if sample_type & PERF_SAMPLE_TIME != 0 {
             size += 8;
         }
-        // Fields must be in bit order: CALLCHAIN (bit 5) before PERIOD (bit 8)
         if sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
             size += 8;
             if let Some(ref cc) = callchain {
@@ -667,6 +672,7 @@ impl SampleEvent {
         Self {
             header: PerfEventHeader::new(PERF_RECORD_SAMPLE, size),
             sample_type,
+            event_id,
             ip,
             pid,
             tid,
@@ -680,6 +686,9 @@ impl SampleEvent {
     fn calculate_size(&self) -> u16 {
         let mut size = 8u16;
 
+        if self.sample_type & PERF_SAMPLE_IDENTIFIER != 0 {
+            size += 8;
+        }
         if self.sample_type & PERF_SAMPLE_IP != 0 {
             size += 8;
         }
@@ -689,7 +698,6 @@ impl SampleEvent {
         if self.sample_type & PERF_SAMPLE_TIME != 0 {
             size += 8;
         }
-        // Fields must be in bit order: CALLCHAIN (bit 5) before PERIOD (bit 8)
         if self.sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
             size += 8;
             if let Some(ref cc) = self.callchain {
@@ -711,6 +719,10 @@ impl SampleEvent {
 
         header.write_to(writer)?;
 
+        if self.sample_type & PERF_SAMPLE_IDENTIFIER != 0 {
+            writer.write_u64::<LittleEndian>(self.event_id)?;
+        }
+
         if self.sample_type & PERF_SAMPLE_IP != 0 {
             writer.write_u64::<LittleEndian>(self.ip)?;
         }
@@ -724,7 +736,13 @@ impl SampleEvent {
             writer.write_u64::<LittleEndian>(self.time)?;
         }
 
-        // Fields must be written in bit order: CALLCHAIN (bit 5) before PERIOD (bit 8)
+        // PERIOD (bit 8) must be written BEFORE CALLCHAIN (bit 5)
+        // The field order is defined by the kernel, NOT by bit number
+        // See: include/uapi/linux/perf_event.h PERF_RECORD_SAMPLE struct
+        if self.sample_type & PERF_SAMPLE_PERIOD != 0 {
+            writer.write_u64::<LittleEndian>(self.period)?;
+        }
+
         if self.sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
             let nr = self
                 .callchain
@@ -737,10 +755,6 @@ impl SampleEvent {
                     writer.write_u64::<LittleEndian>(*ip)?;
                 }
             }
-        }
-
-        if self.sample_type & PERF_SAMPLE_PERIOD != 0 {
-            writer.write_u64::<LittleEndian>(self.period)?;
         }
 
         Ok(())
@@ -781,7 +795,12 @@ impl SampleEvent {
             time = reader.read_u64::<LittleEndian>()?;
         }
 
-        // Fields must be read in bit order: CALLCHAIN (bit 5) before PERIOD (bit 8)
+        // PERIOD (bit 8) must be read BEFORE CALLCHAIN (bit 5)
+        // The field order is defined by the kernel, NOT by bit number
+        if sample_type & PERF_SAMPLE_PERIOD != 0 {
+            period = reader.read_u64::<LittleEndian>()?;
+        }
+
         if sample_type & PERF_SAMPLE_CALLCHAIN != 0 {
             let nr = reader.read_u64::<LittleEndian>()? as usize;
             if nr > 0 {
@@ -791,10 +810,6 @@ impl SampleEvent {
                 }
                 callchain = Some(chain);
             }
-        }
-
-        if sample_type & PERF_SAMPLE_PERIOD != 0 {
-            period = reader.read_u64::<LittleEndian>()?;
         }
 
         // Skip any remaining bytes to ensure we're at the correct position
@@ -809,6 +824,7 @@ impl SampleEvent {
         Ok(Self {
             header,
             sample_type,
+            event_id: 0,
             ip,
             pid,
             tid,
@@ -1268,6 +1284,7 @@ mod tests {
             1000,
             None,
             None,
+            1024,
         );
 
         assert_eq!(sample.header.type_, PERF_RECORD_SAMPLE);
@@ -1319,6 +1336,7 @@ mod tests {
             1000,
             None,
             None,
+            1024,
         );
 
         let mut buffer = Vec::new();
@@ -1347,6 +1365,7 @@ mod tests {
             0,
             Some(callchain.clone()),
             None,
+            1024,
         );
 
         let mut buffer = Vec::new();
@@ -1369,15 +1388,22 @@ mod tests {
         ]);
         assert_eq!(time, 0);
 
-        // CALLCHAIN (bit 5) comes before PERIOD (bit 8)
-        let nr = u64::from_le_bytes([
+        // PERIOD (bit 8) comes BEFORE CALLCHAIN (bit 5) in kernel format
+        let period = u64::from_le_bytes([
             buffer[32], buffer[33], buffer[34], buffer[35], buffer[36], buffer[37], buffer[38],
             buffer[39],
+        ]);
+        assert_eq!(period, 0);
+
+        // CALLCHAIN comes after PERIOD
+        let nr = u64::from_le_bytes([
+            buffer[40], buffer[41], buffer[42], buffer[43], buffer[44], buffer[45], buffer[46],
+            buffer[47],
         ]);
         assert_eq!(nr, 3);
 
         for i in 0..3 {
-            let offset = 40 + (i * 8);
+            let offset = 48 + (i * 8);
             let addr = u64::from_le_bytes([
                 buffer[offset],
                 buffer[offset + 1],
@@ -1390,13 +1416,6 @@ mod tests {
             ]);
             assert_eq!(addr, callchain[i]);
         }
-
-        // PERIOD comes after callchain
-        let period = u64::from_le_bytes([
-            buffer[64], buffer[65], buffer[66], buffer[67], buffer[68], buffer[69], buffer[70],
-            buffer[71],
-        ]);
-        assert_eq!(period, 0);
     }
 
     #[test]
@@ -1410,6 +1429,7 @@ mod tests {
             1000,
             None,
             None,
+            1024,
         );
 
         let size = sample.calculate_size();
@@ -1446,6 +1466,7 @@ mod tests {
             1000,
             None,
             None,
+            1024,
         );
         writer.write_sample(&sample).unwrap();
 
@@ -1555,6 +1576,7 @@ mod tests {
             1000,
             None,
             None,
+            1024,
         );
 
         let mut buffer = Vec::new();
@@ -1588,6 +1610,7 @@ mod tests {
             0,
             Some(callchain.clone()),
             None,
+            1024,
         );
 
         let mut buffer = Vec::new();
@@ -1611,7 +1634,17 @@ mod tests {
     #[test]
     fn test_sample_event_variable_fields() {
         let sample_type_ip_only = PERF_SAMPLE_IP;
-        let sample = SampleEvent::new(sample_type_ip_only, 0, 0x7f0000001000, 0, 0, 0, None, None);
+        let sample = SampleEvent::new(
+            sample_type_ip_only,
+            0,
+            0x7f0000001000,
+            0,
+            0,
+            0,
+            None,
+            None,
+            1024,
+        );
 
         let mut buffer = Vec::new();
         sample.write_to(&mut buffer).unwrap();
