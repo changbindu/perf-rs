@@ -1,4 +1,5 @@
 use crate::error::{PerfError, Result};
+use crate::events::EventModifiers;
 use perf_event::events::Event;
 use perf_event::{Builder, Counter};
 
@@ -8,6 +9,7 @@ pub struct PerfConfig {
     pub cpu: Option<u32>,
     pub include_kernel: bool,
     pub include_user: bool,
+    pub include_hv: bool,
     pub inherit: bool,
     pub enable_on_exec: bool,
 }
@@ -19,6 +21,7 @@ impl Default for PerfConfig {
             cpu: None,
             include_kernel: false,
             include_user: true,
+            include_hv: true,
             inherit: false,
             enable_on_exec: false,
         }
@@ -54,6 +57,13 @@ impl PerfConfig {
         self.include_kernel = include_kernel;
         self
     }
+
+    pub fn with_modifiers(mut self, modifiers: EventModifiers) -> Self {
+        self.include_user = !modifiers.exclude_user;
+        self.include_kernel = !modifiers.exclude_kernel;
+        self.include_hv = !modifiers.exclude_hv;
+        self
+    }
 }
 
 pub fn create_counter<E: Event + Clone + 'static>(
@@ -76,7 +86,7 @@ pub fn create_counter<E: Event + Clone + 'static>(
     }
 
     builder.exclude_kernel(!config.include_kernel);
-    builder.exclude_hv(!config.include_kernel);
+    builder.exclude_hv(!config.include_hv);
     builder.exclude_user(!config.include_user);
     builder.inherit(config.inherit);
 

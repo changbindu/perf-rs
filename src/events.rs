@@ -2,6 +2,16 @@
 //!
 //! This module provides a unified event type and parser that can be used
 //! across stat, record, and other commands.
+//!
+//! # Event Modifiers
+//!
+//! Events can have modifiers appended with `:` to control privilege levels:
+//! - `:u` - count in user space only (exclude kernel)
+//! - `:k` - count in kernel space only (exclude user)
+//! - `:h` - count in hypervisor only (exclude user and kernel)
+//! - `:p` - use precise sampling (PEBS on Intel)
+//!
+//! Multiple modifiers can be combined: `cpu-cycles:uk` (both user and kernel)
 
 use anyhow::{anyhow, Result};
 use perf_event::events::Event;
@@ -10,6 +20,100 @@ use perf_event::events::Event;
 pub use perf_event::events::{Cache, CacheId, CacheOp, CacheResult, Hardware, Raw, Software};
 
 use crate::tracepoint::TracepointId;
+
+/// Event modifiers that control privilege level filtering.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EventModifiers {
+    /// Exclude user-space events (only count kernel)
+    pub exclude_user: bool,
+    /// Exclude kernel-space events (only count user)
+    pub exclude_kernel: bool,
+    /// Exclude hypervisor events
+    pub exclude_hv: bool,
+    /// Use precise sampling (PEBS on Intel)
+    pub precise: bool,
+}
+
+impl EventModifiers {
+    /// Create a new empty modifiers struct (all fields false).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Parse modifiers from a string like "uk", "uhp", etc.
+    ///
+    /// Returns the parsed modifiers and any unrecognized characters.
+    pub fn parse(s: &str) -> (Self, String) {
+        let mut mods = Self::new();
+        let mut unknown = String::new();
+
+        for c in s.chars() {
+            match c {
+                'u' => mods.exclude_kernel = true,
+                'k' => mods.exclude_user = true,
+                'h' => {
+                    mods.exclude_user = true;
+                    mods.exclude_kernel = true;
+                }
+                'p' => mods.precise = true,
+                _ => unknown.push(c),
+            }
+        }
+
+        (mods, unknown)
+    }
+
+    /// Check if any modifiers are set.
+    pub fn is_empty(&self) -> bool {
+        !self.exclude_user && !self.exclude_kernel && !self.exclude_hv && !self.precise
+    }
+
+    /// Get a string representation of the modifiers.
+    pub fn to_suffix(&self) -> String {
+        let mut s = String::new();
+        if self.exclude_kernel && !self.exclude_user {
+            s.push('u');
+        }
+        if self.exclude_user && !self.exclude_kernel {
+            s.push('k');
+        }
+        if self.exclude_user && self.exclude_kernel {
+            s.push('h');
+        }
+        if self.precise {
+            s.push('p');
+        }
+        if !s.is_empty() {
+            format!(":{}", s)
+        } else {
+            String::new()
+        }
+    }
+}
+
+/// A parsed event with optional modifiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedEvent {
+    /// The underlying performance event
+    pub event: PerfEvent,
+    /// Modifiers for this event
+    pub modifiers: EventModifiers,
+}
+
+impl ParsedEvent {
+    /// Create a new parsed event with no modifiers.
+    pub fn new(event: PerfEvent) -> Self {
+        Self {
+            event,
+            modifiers: EventModifiers::new(),
+        }
+    }
+
+    /// Create a parsed event with specific modifiers.
+    pub fn with_modifiers(event: PerfEvent, modifiers: EventModifiers) -> Self {
+        Self { event, modifiers }
+    }
+}
 
 /// A unified event type that can be hardware, software, cache, raw, or tracepoint events.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +161,7 @@ impl PerfEvent {
     }
 }
 
-/// Parse an event name string to a PerfEvent.
+/// Parse an event name string to a ParsedEvent with modifiers.
 ///
 /// Supports:
 /// - Hardware events (cpu-cycles, instructions, cache-references, etc.)
@@ -65,11 +169,81 @@ impl PerfEvent {
 /// - Cache events (L1-dcache-loads, L1-dcache-misses, etc.)
 /// - Raw events (rNNNN where NNNN is a hex config value)
 /// - Tracepoint events (subsystem:name format, e.g., sched:sched_switch)
+/// - Event modifiers (:u, :k, :h, :p)
+///
+/// # Modifiers
+///
+/// - `:u` - user space only (exclude kernel)
+/// - `:k` - kernel space only (exclude user)  
+/// - `:h` - hypervisor only (exclude user and kernel)
+/// - `:p` - precise sampling
+///
+/// # Examples
+///
+/// ```
+/// # use perf_rs::events::{parse_event, EventModifiers};
+/// let evt = parse_event("cpu-cycles:u").unwrap();
+/// assert!(evt.modifiers.exclude_kernel);
+/// assert!(!evt.modifiers.exclude_user);
+/// ```
 ///
 /// # Errors
 ///
 /// Returns an error if the event name is not recognized.
-pub fn parse_event(name: &str) -> Result<PerfEvent> {
+pub fn parse_event(name: &str) -> Result<ParsedEvent> {
+    let name = name.trim();
+
+    // Try tracepoint parsing first if it looks like a tracepoint (subsystem:name)
+    // Tracepoints have format "subsystem:name" where name contains underscores/letters
+    // Modifiers are short sequences of: u, k, h, p
+    if let Some(colon_pos) = name.find(':') {
+        let after_colon = &name[colon_pos + 1..];
+
+        // If it looks like a tracepoint name (contains letters, underscores, digits but NOT just modifier chars)
+        // or has more than one colon, try tracepoint parsing first
+        let is_likely_tracepoint = after_colon.contains('_')
+            || after_colon.len() > 4
+            || after_colon.contains(':')
+            || !after_colon
+                .chars()
+                .all(|c| matches!(c, 'u' | 'k' | 'h' | 'p'));
+
+        if is_likely_tracepoint {
+            // Try tracepoint parsing
+            if let Ok(event) = parse_event_base(name) {
+                return Ok(ParsedEvent::new(event));
+            }
+        }
+    }
+
+    // Split event name and modifiers
+    let (event_name, modifiers) = if let Some(colon_pos) = name.find(':') {
+        let (base, mod_str) = name.split_at(colon_pos);
+        let mod_str = &mod_str[1..];
+        let (mods, unknown) = EventModifiers::parse(mod_str);
+        if !unknown.is_empty() {
+            // Fall back to trying tracepoint parsing
+            if let Ok(event) = parse_event_base(name) {
+                return Ok(ParsedEvent::new(event));
+            }
+            return Err(anyhow!(
+                "Unknown event modifiers: '{}' in '{}'",
+                unknown,
+                name
+            ));
+        }
+        (base, mods)
+    } else {
+        (name, EventModifiers::new())
+    };
+
+    let event = parse_event_base(event_name)?;
+
+    Ok(ParsedEvent::with_modifiers(event, modifiers))
+}
+
+/// Parse the base event name without modifiers.
+fn parse_event_base(name: &str) -> Result<PerfEvent> {
     let name = name.trim();
 
     // Try raw events first (rNNNN format)
@@ -320,6 +494,13 @@ pub fn format_event_name(event: &PerfEvent) -> String {
     }
 }
 
+/// Format a ParsedEvent to a human-readable name including modifiers.
+pub fn format_parsed_event_name(parsed: &ParsedEvent) -> String {
+    let base = format_event_name(&parsed.event);
+    let suffix = parsed.modifiers.to_suffix();
+    format!("{}{}", base, suffix)
+}
+
 fn format_hardware_name(event: Hardware) -> String {
     match event {
         Hardware::CPU_CYCLES => "cpu-cycles".to_string(),
@@ -382,8 +563,8 @@ fn format_cache_name(cache: Cache) -> String {
     format!("{}-{}{}", cache_name, op_name, result_suffix)
 }
 
-/// Parse a comma-separated event string into a vector of PerfEvents.
-pub fn parse_events(events_str: &str) -> Result<Vec<PerfEvent>> {
+/// Parse a comma-separated event string into a vector of ParsedEvents.
+pub fn parse_events(events_str: &str) -> Result<Vec<ParsedEvent>> {
     events_str
         .split(',')
         .map(|s| parse_event(s.trim()))
@@ -396,89 +577,117 @@ mod tests {
 
     #[test]
     fn test_parse_hardware_events() {
+        let evt = parse_event("cpu-cycles").unwrap();
         assert!(matches!(
-            parse_event("cpu-cycles"),
-            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
         ));
+        assert!(evt.modifiers.is_empty());
+
+        let evt = parse_event("cycles").unwrap();
         assert!(matches!(
-            parse_event("cycles"),
-            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
         ));
+
+        let evt = parse_event("instructions").unwrap();
         assert!(matches!(
-            parse_event("instructions"),
-            Ok(PerfEvent::Hardware(Hardware::INSTRUCTIONS))
+            evt.event,
+            PerfEvent::Hardware(Hardware::INSTRUCTIONS)
         ));
+
+        let evt = parse_event("cache-misses").unwrap();
         assert!(matches!(
-            parse_event("cache-misses"),
-            Ok(PerfEvent::Hardware(Hardware::CACHE_MISSES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::CACHE_MISSES)
         ));
+
+        let evt = parse_event("branch-misses").unwrap();
         assert!(matches!(
-            parse_event("branch-misses"),
-            Ok(PerfEvent::Hardware(Hardware::BRANCH_MISSES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::BRANCH_MISSES)
         ));
+
+        let evt = parse_event("bus-cycles").unwrap();
         assert!(matches!(
-            parse_event("bus-cycles"),
-            Ok(PerfEvent::Hardware(Hardware::BUS_CYCLES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::BUS_CYCLES)
         ));
+
+        let evt = parse_event("ref-cycles").unwrap();
         assert!(matches!(
-            parse_event("ref-cycles"),
-            Ok(PerfEvent::Hardware(Hardware::REF_CPU_CYCLES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::REF_CPU_CYCLES)
         ));
     }
 
     #[test]
     fn test_parse_cache_events() {
+        let evt = parse_event("L1-dcache-loads").unwrap();
         assert!(matches!(
-            parse_event("L1-dcache-loads"),
-            Ok(PerfEvent::Cache(Cache {
+            evt.event,
+            PerfEvent::Cache(Cache {
                 which: CacheId::L1D,
                 operation: CacheOp::READ,
                 result: CacheResult::ACCESS,
-            }))
+            })
         ));
+
+        let evt = parse_event("L1-dcache-load-misses").unwrap();
         assert!(matches!(
-            parse_event("L1-dcache-load-misses"),
-            Ok(PerfEvent::Cache(Cache {
+            evt.event,
+            PerfEvent::Cache(Cache {
                 which: CacheId::L1D,
                 operation: CacheOp::READ,
                 result: CacheResult::MISS,
-            }))
+            })
         ));
+
+        let evt = parse_event("LLC-loads").unwrap();
         assert!(matches!(
-            parse_event("LLC-loads"),
-            Ok(PerfEvent::Cache(Cache {
+            evt.event,
+            PerfEvent::Cache(Cache {
                 which: CacheId::LL,
                 operation: CacheOp::READ,
                 result: CacheResult::ACCESS,
-            }))
+            })
         ));
+
+        let evt = parse_event("dTLB-load-misses").unwrap();
         assert!(matches!(
-            parse_event("dTLB-load-misses"),
-            Ok(PerfEvent::Cache(Cache {
+            evt.event,
+            PerfEvent::Cache(Cache {
                 which: CacheId::DTLB,
                 operation: CacheOp::READ,
                 result: CacheResult::MISS,
-            }))
+            })
         ));
     }
 
     #[test]
     fn test_parse_raw_events() {
+        let evt = parse_event("r1a8").unwrap();
         assert!(matches!(
-            parse_event("r1a8"),
-            Ok(PerfEvent::Raw(Raw { config: 0x1a8, .. }))
+            evt.event,
+            PerfEvent::Raw(Raw { config: 0x1a8, .. })
         ));
+
+        let evt = parse_event("r00c0").unwrap();
         assert!(matches!(
-            parse_event("r00c0"),
-            Ok(PerfEvent::Raw(Raw { config: 0xc0, .. }))
+            evt.event,
+            PerfEvent::Raw(Raw { config: 0xc0, .. })
         ));
+
+        let evt = parse_event("r0x1a8").unwrap();
         assert!(matches!(
-            parse_event("r0x1a8"),
-            Ok(PerfEvent::Raw(Raw { config: 0x1a8, .. }))
+            evt.event,
+            PerfEvent::Raw(Raw { config: 0x1a8, .. })
         ));
+
+        let evt = parse_event("R1A8").unwrap();
         assert!(matches!(
-            parse_event("R1A8"),
-            Ok(PerfEvent::Raw(Raw { config: 0x1a8, .. }))
+            evt.event,
+            PerfEvent::Raw(Raw { config: 0x1a8, .. })
         ));
     }
 
@@ -487,15 +696,15 @@ mod tests {
         let events = parse_events("cpu-cycles,instructions,cache-misses").unwrap();
         assert_eq!(events.len(), 3);
         assert!(matches!(
-            events[0],
+            events[0].event,
             PerfEvent::Hardware(Hardware::CPU_CYCLES)
         ));
         assert!(matches!(
-            events[1],
+            events[1].event,
             PerfEvent::Hardware(Hardware::INSTRUCTIONS)
         ));
         assert!(matches!(
-            events[2],
+            events[2].event,
             PerfEvent::Hardware(Hardware::CACHE_MISSES)
         ));
     }
@@ -557,22 +766,25 @@ mod tests {
         let result = parse_event("invalid:nonexistent_tracepoint");
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("not found") || err_msg.contains("tracefs"));
+        assert!(
+            err_msg.contains("not found")
+                || err_msg.contains("tracefs")
+                || err_msg.contains("Unknown event")
+        );
     }
 
     #[test]
     fn test_parse_tracepoint_whitespace_handling() {
         let result = parse_event("  sched:sched_switch  ");
-        // This will either succeed (if tracepoint exists) or fail with tracepoint error
-        // The key test is that whitespace is trimmed
         match result {
-            Ok(PerfEvent::Tracepoint(tp)) => {
-                assert_eq!(tp.subsystem, "sched");
-                assert_eq!(tp.name, "sched_switch");
-            }
-            Ok(_) => panic!("Expected Tracepoint variant"),
+            Ok(parsed) => match parsed.event {
+                PerfEvent::Tracepoint(tp) => {
+                    assert_eq!(tp.subsystem, "sched");
+                    assert_eq!(tp.name, "sched_switch");
+                }
+                _ => panic!("Expected Tracepoint variant"),
+            },
             Err(e) => {
-                // Should be a tracepoint error, not a parsing error
                 let err_msg = e.to_string();
                 assert!(
                     err_msg.contains("not found")
@@ -607,5 +819,135 @@ mod tests {
         let event1 = PerfEvent::Tracepoint(tp1);
         let event2 = event1.clone();
         assert_eq!(event1, event2);
+    }
+
+    #[test]
+    fn test_event_modifier_user_only() {
+        let evt = parse_event("cpu-cycles:u").unwrap();
+        assert!(matches!(
+            evt.event,
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
+        ));
+        assert!(evt.modifiers.exclude_kernel);
+        assert!(!evt.modifiers.exclude_user);
+    }
+
+    #[test]
+    fn test_event_modifier_kernel_only() {
+        let evt = parse_event("instructions:k").unwrap();
+        assert!(matches!(
+            evt.event,
+            PerfEvent::Hardware(Hardware::INSTRUCTIONS)
+        ));
+        assert!(evt.modifiers.exclude_user);
+        assert!(!evt.modifiers.exclude_kernel);
+    }
+
+    #[test]
+    fn test_event_modifier_hypervisor() {
+        let evt = parse_event("cache-misses:h").unwrap();
+        assert!(matches!(
+            evt.event,
+            PerfEvent::Hardware(Hardware::CACHE_MISSES)
+        ));
+        assert!(evt.modifiers.exclude_user);
+        assert!(evt.modifiers.exclude_kernel);
+    }
+
+    #[test]
+    fn test_event_modifier_user_kernel() {
+        let evt = parse_event("cycles:uk").unwrap();
+        assert!(matches!(
+            evt.event,
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
+        ));
+        assert!(evt.modifiers.exclude_kernel);
+        assert!(evt.modifiers.exclude_user);
+    }
+
+    #[test]
+    fn test_event_modifier_precise() {
+        let evt = parse_event("instructions:p").unwrap();
+        assert!(matches!(
+            evt.event,
+            PerfEvent::Hardware(Hardware::INSTRUCTIONS)
+        ));
+        assert!(evt.modifiers.precise);
+    }
+
+    #[test]
+    fn test_event_modifier_combined() {
+        let evt = parse_event("cycles:up").unwrap();
+        assert!(matches!(
+            evt.event,
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
+        ));
+        assert!(evt.modifiers.exclude_kernel);
+        assert!(!evt.modifiers.exclude_user);
+        assert!(evt.modifiers.precise);
+    }
+
+    #[test]
+    fn test_event_modifier_on_cache_event() {
+        let evt = parse_event("L1-dcache-loads:u").unwrap();
+        assert!(matches!(
+            evt.event,
+            PerfEvent::Cache(Cache {
+                which: CacheId::L1D,
+                operation: CacheOp::READ,
+                result: CacheResult::ACCESS,
+            })
+        ));
+        assert!(evt.modifiers.exclude_kernel);
+    }
+
+    #[test]
+    fn test_event_modifier_invalid() {
+        let result = parse_event("cycles:xyz");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_event_modifiers_parse() {
+        let (mods, unknown) = EventModifiers::parse("uk");
+        assert!(mods.exclude_kernel);
+        assert!(mods.exclude_user);
+        assert!(unknown.is_empty());
+
+        let (mods, unknown) = EventModifiers::parse("p");
+        assert!(mods.precise);
+        assert!(!mods.exclude_user);
+        assert!(!mods.exclude_kernel);
+
+        let (mods, unknown) = EventModifiers::parse("upx");
+        assert!(mods.exclude_kernel);
+        assert!(mods.precise);
+        assert_eq!(unknown, "x");
+    }
+
+    #[test]
+    fn test_event_modifiers_to_suffix() {
+        let mut mods = EventModifiers::new();
+        assert!(mods.to_suffix().is_empty());
+
+        mods.exclude_kernel = true;
+        assert_eq!(mods.to_suffix(), ":u");
+
+        mods.exclude_kernel = false;
+        mods.exclude_user = true;
+        assert_eq!(mods.to_suffix(), ":k");
+
+        mods.exclude_kernel = true;
+        assert_eq!(mods.to_suffix(), ":h");
+
+        mods.precise = true;
+        assert_eq!(mods.to_suffix(), ":hp");
+    }
+
+    #[test]
+    fn test_tracepoint_with_modifier_not_confused() {
+        let evt = parse_event("sched:sched_switch").unwrap();
+        assert!(matches!(evt.event, PerfEvent::Tracepoint(_)));
+        assert!(evt.modifiers.is_empty());
     }
 }

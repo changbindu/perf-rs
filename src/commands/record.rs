@@ -4,7 +4,7 @@ use crate::core::cpu::{get_online_cpus, parse_cpu_list, validate_cpu_ids};
 use crate::core::perf_data::{CommEvent, MmapEvent, PerfDataWriter, PerfEventAttr, SampleEvent};
 use crate::core::privilege::check_privilege;
 use crate::error::PerfError;
-use crate::events::{parse_event, Hardware, PerfEvent};
+use crate::events::{parse_event, Hardware, ParsedEvent, PerfEvent};
 use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -186,7 +186,7 @@ pub fn execute(
     let event = if let Some(event_str) = event {
         parse_event(event_str)?
     } else {
-        PerfEvent::Hardware(Hardware::CPU_CYCLES)
+        ParsedEvent::new(PerfEvent::Hardware(Hardware::CPU_CYCLES))
     };
 
     let sample_period = if let Some(freq) = frequency {
@@ -223,7 +223,7 @@ pub fn execute(
 
 fn record_with_pid(
     pid: u32,
-    event: PerfEvent,
+    event: ParsedEvent,
     sample_period: u64,
     output_path: &str,
     call_graph: Option<u16>,
@@ -233,15 +233,19 @@ fn record_with_pid(
 
     eprintln!("Recording process {} ...", pid);
 
-    let attr = event_to_attr(&event, sample_period, callchain);
+    let attr = event_to_attr(&event.event, sample_period, callchain);
     let sample_type = attr.sample_type;
-    let effective_period = effective_sample_period(&event, sample_period);
+    let effective_period = effective_sample_period(&event.event, sample_period);
 
     // For tracepoints, we need to specify a CPU (pid=-1 with cpu=-1 is invalid)
-    let cpu = if event.is_tracepoint() { Some(0) } else { None };
+    let cpu = if event.event.is_tracepoint() {
+        Some(0)
+    } else {
+        None
+    };
 
     let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
-        event,
+        event.event.clone(),
         pid as i32,
         effective_period,
         false,
@@ -308,7 +312,7 @@ fn record_with_pid(
 
 fn record_with_command(
     command: &[String],
-    event: PerfEvent,
+    event: ParsedEvent,
     sample_period: u64,
     output_path: &str,
     call_graph: Option<u16>,
@@ -321,15 +325,19 @@ fn record_with_command(
             waitpid(child, Some(WaitPidFlag::WUNTRACED))
                 .context("Failed to wait for child to stop")?;
 
-            let attr = event_to_attr(&event, sample_period, callchain);
+            let attr = event_to_attr(&event.event, sample_period, callchain);
             let sample_type = attr.sample_type;
-            let effective_period = effective_sample_period(&event, sample_period);
+            let effective_period = effective_sample_period(&event.event, sample_period);
 
             // For tracepoints, we need to specify a CPU (pid=-1 with cpu=-1 is invalid)
-            let cpu = if event.is_tracepoint() { Some(0) } else { None };
+            let cpu = if event.event.is_tracepoint() {
+                Some(0)
+            } else {
+                None
+            };
 
             let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
-                event,
+                event.event.clone(),
                 child.as_raw(),
                 effective_period,
                 false,
@@ -479,7 +487,7 @@ fn parse_sample_record(
 
 fn record_system_wide(
     cpus: Vec<u32>,
-    event: PerfEvent,
+    event: ParsedEvent,
     sample_period: u64,
     output_path: &str,
     call_graph: Option<u16>,
@@ -489,14 +497,14 @@ fn record_system_wide(
 
     eprintln!("Recording on CPUs: {:?}", cpus);
 
-    let attr = event_to_attr(&event, sample_period, callchain);
+    let attr = event_to_attr(&event.event, sample_period, callchain);
     let sample_type = attr.sample_type;
-    let effective_period = effective_sample_period(&event, sample_period);
+    let effective_period = effective_sample_period(&event.event, sample_period);
 
     let mut ringbufs = Vec::with_capacity(cpus.len());
     for &cpu in &cpus {
         let ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_cpu(
-            event.clone(),
+            event.event.clone(),
             cpu,
             effective_period,
             false,
@@ -587,17 +595,20 @@ mod tests {
 
     #[test]
     fn test_parse_event() {
+        let evt = parse_event("cpu-cycles").unwrap();
         assert!(matches!(
-            parse_event("cpu-cycles"),
-            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
         ));
+        let evt = parse_event("cycles").unwrap();
         assert!(matches!(
-            parse_event("cycles"),
-            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
         ));
+        let evt = parse_event("instructions").unwrap();
         assert!(matches!(
-            parse_event("instructions"),
-            Ok(PerfEvent::Hardware(Hardware::INSTRUCTIONS))
+            evt.event,
+            PerfEvent::Hardware(Hardware::INSTRUCTIONS)
         ));
         assert!(parse_event("cache-misses").is_ok());
         assert!(parse_event("cpu-clock").is_ok());

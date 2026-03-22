@@ -6,7 +6,7 @@ use crate::core::perf_event::{
 };
 use crate::core::privilege::check_privilege;
 use crate::error::PerfError;
-use crate::events::{format_event_name, parse_events, Hardware, PerfEvent};
+use crate::events::{format_parsed_event_name, parse_events, Hardware, ParsedEvent, PerfEvent};
 use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -58,8 +58,8 @@ pub fn execute(
         parse_events(events_str)?
     } else {
         vec![
-            PerfEvent::Hardware(Hardware::CPU_CYCLES),
-            PerfEvent::Hardware(Hardware::INSTRUCTIONS),
+            ParsedEvent::new(PerfEvent::Hardware(Hardware::CPU_CYCLES)),
+            ParsedEvent::new(PerfEvent::Hardware(Hardware::INSTRUCTIONS)),
         ]
     };
 
@@ -105,20 +105,26 @@ pub fn execute(
 }
 
 /// Attach to a running process and monitor its performance counters.
-fn run_with_pid(pid: u32, events: &[PerfEvent]) -> Result<()> {
+fn run_with_pid(pid: u32, events: &[ParsedEvent]) -> Result<()> {
     let mut counters: Vec<(String, perf_event::Counter)> = Vec::new();
 
-    for event in events {
+    for parsed in events {
         // For tracepoints, we need to monitor system-wide (cpu 0) and include kernel events
-        let config = if event.is_tracepoint() {
-            PerfConfig::new().with_cpu(0).with_include_kernel(true)
+        let config = if parsed.event.is_tracepoint() {
+            PerfConfig::new()
+                .with_cpu(0)
+                .with_include_kernel(true)
+                .with_modifiers(parsed.modifiers)
         } else {
-            PerfConfig::new().with_pid(pid).with_inherit(true)
+            PerfConfig::new()
+                .with_pid(pid)
+                .with_inherit(true)
+                .with_modifiers(parsed.modifiers)
         };
 
-        let counter = create_counter(event.clone(), &config)
-            .with_context(|| format!("Failed to create {:?} counter", event))?;
-        counters.push((format_event_name(event), counter));
+        let counter = create_counter(parsed.event.clone(), &config)
+            .with_context(|| format!("Failed to create {:?} counter", parsed.event))?;
+        counters.push((format_parsed_event_name(parsed), counter));
     }
 
     for (name, counter) in &mut counters {
@@ -150,7 +156,7 @@ fn run_with_pid(pid: u32, events: &[PerfEvent]) -> Result<()> {
 }
 
 /// Run a command with performance counters.
-fn run_with_counters(command: &[String], events: &[PerfEvent]) -> Result<()> {
+fn run_with_counters(command: &[String], events: &[ParsedEvent]) -> Result<()> {
     match unsafe { fork() }? {
         ForkResult::Parent { child } => {
             waitpid(child, Some(WaitPidFlag::WUNTRACED))
@@ -158,19 +164,23 @@ fn run_with_counters(command: &[String], events: &[PerfEvent]) -> Result<()> {
 
             let mut counters: Vec<(String, perf_event::Counter)> = Vec::new();
 
-            for event in events {
+            for parsed in events {
                 // For tracepoints, we need to monitor system-wide (cpu 0) and include kernel events
-                let config = if event.is_tracepoint() {
-                    PerfConfig::new().with_cpu(0).with_include_kernel(true)
+                let config = if parsed.event.is_tracepoint() {
+                    PerfConfig::new()
+                        .with_cpu(0)
+                        .with_include_kernel(true)
+                        .with_modifiers(parsed.modifiers)
                 } else {
                     PerfConfig::new()
                         .with_pid(child.as_raw() as u32)
                         .with_inherit(true)
+                        .with_modifiers(parsed.modifiers)
                 };
 
-                let counter = create_counter(event.clone(), &config)
-                    .with_context(|| format!("Failed to create {:?} counter", event))?;
-                counters.push((format_event_name(event), counter));
+                let counter = create_counter(parsed.event.clone(), &config)
+                    .with_context(|| format!("Failed to create {:?} counter", parsed.event))?;
+                counters.push((format_parsed_event_name(parsed), counter));
             }
 
             for (name, counter) in &mut counters {
@@ -228,24 +238,26 @@ struct CpuCounter {
     counter: perf_event::Counter,
 }
 
-fn create_per_cpu_counters(cpus: &[u32], events: &[PerfEvent]) -> Result<Vec<CpuCounter>> {
+fn create_per_cpu_counters(cpus: &[u32], events: &[ParsedEvent]) -> Result<Vec<CpuCounter>> {
     let mut counters = Vec::new();
 
     for &cpu in cpus {
-        for event in events {
-            let config = PerfConfig::new().with_cpu(cpu);
-            match create_counter(event.clone(), &config) {
+        for parsed in events {
+            let config = PerfConfig::new()
+                .with_cpu(cpu)
+                .with_modifiers(parsed.modifiers);
+            match create_counter(parsed.event.clone(), &config) {
                 Ok(counter) => {
                     counters.push(CpuCounter {
                         cpu,
-                        name: format_event_name(event),
+                        name: format_parsed_event_name(parsed),
                         counter,
                     });
                 }
                 Err(e) => {
                     eprintln!(
                         "Warning: Failed to create {:?} counter for CPU {}: {}",
-                        event, cpu, e
+                        parsed.event, cpu, e
                     );
                 }
             }
@@ -382,7 +394,7 @@ fn display_per_cpu_results(values: &[(u32, String, u64)], command: &[String], st
     }
 }
 
-fn run_system_wide_standalone(cpus: &[u32], events: &[PerfEvent], per_cpu: bool) -> Result<()> {
+fn run_system_wide_standalone(cpus: &[u32], events: &[ParsedEvent], per_cpu: bool) -> Result<()> {
     let mut counters = create_per_cpu_counters(cpus, events)?;
 
     eprintln!(
@@ -421,7 +433,7 @@ fn run_system_wide_standalone(cpus: &[u32], events: &[PerfEvent], per_cpu: bool)
 
 fn run_system_wide_with_counters(
     cpus: &[u32],
-    events: &[PerfEvent],
+    events: &[ParsedEvent],
     command: &[String],
     per_cpu: bool,
 ) -> Result<()> {
@@ -541,7 +553,7 @@ fn format_number(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::parse_event;
+    use crate::events::{format_event_name, parse_event};
     use crate::tracepoint::TracepointId;
 
     #[test]
@@ -567,21 +579,25 @@ mod tests {
 
     #[test]
     fn test_parse_event() {
+        let evt = parse_event("cpu-cycles").unwrap();
         assert!(matches!(
-            parse_event("cpu-cycles"),
-            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
         ));
+        let evt = parse_event("cycles").unwrap();
         assert!(matches!(
-            parse_event("cycles"),
-            Ok(PerfEvent::Hardware(Hardware::CPU_CYCLES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::CPU_CYCLES)
         ));
+        let evt = parse_event("instructions").unwrap();
         assert!(matches!(
-            parse_event("instructions"),
-            Ok(PerfEvent::Hardware(Hardware::INSTRUCTIONS))
+            evt.event,
+            PerfEvent::Hardware(Hardware::INSTRUCTIONS)
         ));
+        let evt = parse_event("cache-misses").unwrap();
         assert!(matches!(
-            parse_event("cache-misses"),
-            Ok(PerfEvent::Hardware(Hardware::CACHE_MISSES))
+            evt.event,
+            PerfEvent::Hardware(Hardware::CACHE_MISSES)
         ));
         assert!(parse_event("unknown").is_err());
     }
@@ -591,11 +607,11 @@ mod tests {
         let events = parse_events("cpu-cycles,instructions").unwrap();
         assert_eq!(events.len(), 2);
         assert!(matches!(
-            events[0],
+            events[0].event,
             PerfEvent::Hardware(Hardware::CPU_CYCLES)
         ));
         assert!(matches!(
-            events[1],
+            events[1].event,
             PerfEvent::Hardware(Hardware::INSTRUCTIONS)
         ));
     }
@@ -625,11 +641,13 @@ mod tests {
     fn test_parse_tracepoint_event_recognizes_format() {
         let result = parse_event("sched:sched_switch");
         match result {
-            Ok(PerfEvent::Tracepoint(tp)) => {
-                assert_eq!(tp.subsystem, "sched");
-                assert_eq!(tp.name, "sched_switch");
-            }
-            Ok(_) => panic!("Expected Tracepoint variant"),
+            Ok(parsed) => match parsed.event {
+                PerfEvent::Tracepoint(tp) => {
+                    assert_eq!(tp.subsystem, "sched");
+                    assert_eq!(tp.name, "sched_switch");
+                }
+                _ => panic!("Expected Tracepoint variant"),
+            },
             Err(e) => {
                 let err_msg = e.to_string();
                 assert!(
@@ -656,8 +674,8 @@ mod tests {
             Ok(events) => {
                 assert!(events.len() >= 1);
                 if events.len() == 2 {
-                    assert!(matches!(events[0], PerfEvent::Hardware(_)));
-                    assert!(matches!(events[1], PerfEvent::Tracepoint(_)));
+                    assert!(matches!(events[0].event, PerfEvent::Hardware(_)));
+                    assert!(matches!(events[1].event, PerfEvent::Tracepoint(_)));
                 }
             }
             Err(e) => {

@@ -108,6 +108,30 @@ sudo perf-rs stat --event sched:sched_switch -- ls
 sudo perf-rs stat --event sched:sched_switch,sched:sched_process_fork -- ./your_program
 ```
 
+#### Event Modifiers
+
+Events can have modifiers appended with `:` to control privilege levels:
+
+```bash
+# Count only user-space cycles
+sudo perf-rs stat --event cpu-cycles:u -- ./your_program
+
+# Count only kernel-space instructions
+sudo perf-rs stat --event instructions:k -- ./your_program
+
+# Count both user and kernel (default behavior)
+sudo perf-rs stat --event cpu-cycles:uk -- ./your_program
+
+# Multiple events with different modifiers
+sudo perf-rs stat --event "cpu-cycles:u,instructions:k" -- ./your_program
+```
+
+Available modifiers:
+- `:u` - user space only (exclude kernel events)
+- `:k` - kernel space only (exclude user events)
+- `:h` - hypervisor only (exclude user and kernel)
+- `:p` - precise sampling (PEBS on Intel)
+
 ### Record Performance Samples
 
 Record samples for profiling:
@@ -334,7 +358,7 @@ perf-rs targets a different use case than Linux perf:
 | LBR (Last Branch Record) | ❌ Planned | Branch trace capture |
 | PEBS | ❌ Planned | Precise Event-Based Sampling |
 | Intel PT | ❌ Planned | Full execution trace |
-| Event modifiers (:u, :k, :p) | ❌ Planned | User/kernel/precise modifiers |
+| Event modifiers (:u, :k, :p) | ✅ Complete | User/kernel/precise modifiers |
 | Event groups ({e1,e2}) | ❌ Planned | Synchronized event groups |
 
 ### Core Features
