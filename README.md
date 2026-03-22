@@ -143,6 +143,12 @@ sudo perf-rs record --frequency 99 -- ./your_program
 # Record specific events
 sudo perf-rs record --event cpu-cycles --frequency 99 -- ./your_program
 
+# Record multiple events simultaneously
+sudo perf-rs record --event cpu-cycles,instructions --frequency 99 -- ./your_program
+
+# Record multiple events with modifiers
+sudo perf-rs record --event "cpu-cycles:u,instructions:k" --frequency 99 -- ./your_program
+
 # Use sampling period instead of frequency
 sudo perf-rs record --event instructions --period 100000 -- ./your_program
 
@@ -353,6 +359,7 @@ perf-rs targets a different use case than Linux perf:
 | System-wide (`-a/--all-cpus`) | ✅ Complete | All CPUs |
 | Command execution | ✅ Complete | `-- <cmd>` profiling |
 | Call graphs (`-g`) | ✅ Complete | Frame pointer unwinding |
+| Multiple events (`-e e1,e2`) | ✅ Complete | Record multiple events simultaneously |
 | Sample: IP, TID, TIME, PERIOD | ✅ Complete | Core sample data |
 | Sample: CPU, CALLCHAIN | ✅ Complete | Extended sample data |
 | LBR (Last Branch Record) | ❌ Planned | Branch trace capture |

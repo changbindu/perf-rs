@@ -3,8 +3,9 @@
 use crate::core::cpu::{get_online_cpus, parse_cpu_list, validate_cpu_ids};
 use crate::core::perf_data::{CommEvent, MmapEvent, PerfDataWriter, PerfEventAttr, SampleEvent};
 use crate::core::privilege::check_privilege;
+use crate::core::ringbuf::RingBuffer;
 use crate::error::PerfError;
-use crate::events::{parse_event, Hardware, ParsedEvent, PerfEvent};
+use crate::events::{parse_events, Hardware, ParsedEvent, PerfEvent};
 use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -14,6 +15,14 @@ use std::time::{Duration, Instant};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 static EVENT_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Associates a ring buffer with its event metadata for multi-event recording.
+struct EventRingBuffer {
+    event_id: u64,
+    ringbuf: RingBuffer,
+    sample_period: u64,
+    sample_type: u64,
+}
 
 extern "C" fn signal_handler(_sig: libc::c_int) {
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
@@ -183,11 +192,17 @@ pub fn execute(
         .into());
     }
 
-    let event = if let Some(event_str) = event {
-        parse_event(event_str)?
+    let events = if let Some(events_str) = event {
+        parse_events(events_str)?
     } else {
-        ParsedEvent::new(PerfEvent::Hardware(Hardware::CPU_CYCLES))
+        vec![ParsedEvent::new(PerfEvent::Hardware(Hardware::CPU_CYCLES))]
     };
+
+    if events.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No events specified. Usage: perf record -e <events> -- <command>"
+        ));
+    }
 
     let sample_period = if let Some(freq) = frequency {
         1_000_000_000u64 / freq.max(1)
@@ -213,17 +228,17 @@ pub fn execute(
             cpus
         };
 
-        record_system_wide(cpus, event, sample_period, output_path, call_graph)
+        record_system_wide(cpus, events, sample_period, output_path, call_graph)
     } else if let Some(target_pid) = pid {
-        record_with_pid(target_pid, event, sample_period, output_path, call_graph)
+        record_with_pid(target_pid, events, sample_period, output_path, call_graph)
     } else {
-        record_with_command(command, event, sample_period, output_path, call_graph)
+        record_with_command(command, events, sample_period, output_path, call_graph)
     }
 }
 
 fn record_with_pid(
     pid: u32,
-    event: ParsedEvent,
+    events: Vec<ParsedEvent>,
     sample_period: u64,
     output_path: &str,
     call_graph: Option<u16>,
@@ -233,63 +248,85 @@ fn record_with_pid(
 
     eprintln!("Recording process {} ...", pid);
 
-    let attr = event_to_attr(&event.event, sample_period, callchain);
-    let sample_type = attr.sample_type;
-    let effective_period = effective_sample_period(&event.event, sample_period);
-
-    // For tracepoints, we need to specify a CPU (pid=-1 with cpu=-1 is invalid)
-    let cpu = if event.event.is_tracepoint() {
-        Some(0)
-    } else {
-        None
-    };
-
-    let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
-        event.event.clone(),
-        pid as i32,
-        effective_period,
-        false,
-        callchain,
-        max_stack,
-        cpu,
-    )
-    .context("Failed to create ring buffer")?;
-
-    ringbuf.enable().context("Failed to enable sampling")?;
-
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
-    let event_id = generate_event_id();
+    let mut attrs = Vec::with_capacity(events.len());
+    let mut all_event_ids = Vec::with_capacity(events.len());
+    let mut event_ringbufs: Vec<EventRingBuffer> = Vec::new();
+
+    for parsed in events.iter() {
+        let attr = event_to_attr(&parsed.event, sample_period, callchain);
+        let sample_type = attr.sample_type;
+        let effective_period = effective_sample_period(&parsed.event, sample_period);
+        let event_id = generate_event_id();
+
+        let cpu = if parsed.event.is_tracepoint() {
+            Some(0)
+        } else {
+            None
+        };
+
+        let ringbuf = RingBuffer::from_event_for_pid(
+            parsed.event.clone(),
+            pid as i32,
+            effective_period,
+            false,
+            callchain,
+            max_stack,
+            cpu,
+        )
+        .with_context(|| format!("Failed to create ring buffer for event {:?}", parsed.event))?;
+
+        attrs.push(attr);
+        all_event_ids.push(vec![event_id]);
+        event_ringbufs.push(EventRingBuffer {
+            event_id,
+            ringbuf,
+            sample_period: effective_period,
+            sample_type,
+        });
+    }
+
     writer
-        .initialize(&[attr], &[vec![event_id]])
+        .initialize(&attrs, &all_event_ids)
         .context("Failed to initialize perf.data file")?;
 
     write_process_events(&mut writer, pid, pid).context("Failed to write process events")?;
 
+    for erb in &mut event_ringbufs {
+        erb.ringbuf.enable().context("Failed to enable sampling")?;
+    }
+
     let start_time = Instant::now();
     let mut sample_count = 0u64;
+    let mut total_lost = 0u64;
 
     while !SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
         if !process_exists(pid) {
             break;
         }
 
-        while let Some(record) = ringbuf.next_record() {
-            if let Some(sample) =
-                parse_sample_record(&record, effective_period, sample_type, event_id)
-            {
-                writer
-                    .write_sample(&sample)
-                    .context("Failed to write sample")?;
-                sample_count += 1;
+        for erb in &mut event_ringbufs {
+            while let Some(record) = erb.ringbuf.next_record() {
+                if let Some(sample) =
+                    parse_sample_record(&record, erb.sample_period, erb.sample_type, erb.event_id)
+                {
+                    writer
+                        .write_sample(&sample)
+                        .context("Failed to write sample")?;
+                    sample_count += 1;
+                }
             }
         }
 
         std::thread::sleep(Duration::from_micros(100));
     }
 
-    ringbuf.disable().ok();
+    for erb in &mut event_ringbufs {
+        erb.ringbuf.disable().ok();
+        total_lost += erb.ringbuf.lost_count();
+    }
 
     writer
         .write_finished_round()
@@ -303,7 +340,7 @@ fn record_with_pid(
         "Recorded {} samples in {:.2}s ({} lost)",
         sample_count,
         elapsed.as_secs_f64(),
-        ringbuf.lost_count()
+        total_lost
     );
     eprintln!("Saved to: {}", output_path);
 
@@ -312,7 +349,7 @@ fn record_with_pid(
 
 fn record_with_command(
     command: &[String],
-    event: ParsedEvent,
+    events: Vec<ParsedEvent>,
     sample_period: u64,
     output_path: &str,
     call_graph: Option<u16>,
@@ -325,45 +362,64 @@ fn record_with_command(
             waitpid(child, Some(WaitPidFlag::WUNTRACED))
                 .context("Failed to wait for child to stop")?;
 
-            let attr = event_to_attr(&event.event, sample_period, callchain);
-            let sample_type = attr.sample_type;
-            let effective_period = effective_sample_period(&event.event, sample_period);
-
-            // For tracepoints, we need to specify a CPU (pid=-1 with cpu=-1 is invalid)
-            let cpu = if event.event.is_tracepoint() {
-                Some(0)
-            } else {
-                None
-            };
-
-            let mut ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_pid(
-                event.event.clone(),
-                child.as_raw(),
-                effective_period,
-                false,
-                callchain,
-                max_stack,
-                cpu,
-            )
-            .context("Failed to create ring buffer")?;
-
             let mut writer = PerfDataWriter::from_path(output_path)
                 .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
-            let event_id = generate_event_id();
+            let mut attrs = Vec::with_capacity(events.len());
+            let mut all_event_ids = Vec::with_capacity(events.len());
+            let mut event_ringbufs: Vec<EventRingBuffer> = Vec::new();
+
+            for parsed in events.iter() {
+                let attr = event_to_attr(&parsed.event, sample_period, callchain);
+                let sample_type = attr.sample_type;
+                let effective_period = effective_sample_period(&parsed.event, sample_period);
+                let event_id = generate_event_id();
+
+                let cpu = if parsed.event.is_tracepoint() {
+                    Some(0)
+                } else {
+                    None
+                };
+
+                let ringbuf = RingBuffer::from_event_for_pid(
+                    parsed.event.clone(),
+                    child.as_raw(),
+                    effective_period,
+                    false,
+                    callchain,
+                    max_stack,
+                    cpu,
+                )
+                .with_context(|| {
+                    format!("Failed to create ring buffer for event {:?}", parsed.event)
+                })?;
+
+                attrs.push(attr);
+                all_event_ids.push(vec![event_id]);
+                event_ringbufs.push(EventRingBuffer {
+                    event_id,
+                    ringbuf,
+                    sample_period: effective_period,
+                    sample_type,
+                });
+            }
+
             writer
-                .initialize(&[attr], &[vec![event_id]])
+                .initialize(&attrs, &all_event_ids)
                 .context("Failed to initialize perf.data file")?;
 
             write_process_events(&mut writer, child.as_raw() as u32, child.as_raw() as u32)
                 .context("Failed to write process events")?;
 
-            ringbuf.enable().context("Failed to enable sampling")?;
+            for erb in &mut event_ringbufs {
+                erb.ringbuf.enable().context("Failed to enable sampling")?;
+            }
 
             kill(child, Signal::SIGCONT).context("Failed to continue child process")?;
 
             let start_time = Instant::now();
             let mut sample_count = 0u64;
+            let mut total_lost = 0u64;
 
             loop {
                 if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
@@ -378,14 +434,19 @@ fn record_with_command(
                     _ => {}
                 }
 
-                while let Some(record) = ringbuf.next_record() {
-                    if let Some(sample) =
-                        parse_sample_record(&record, effective_period, sample_type, event_id)
-                    {
-                        writer
-                            .write_sample(&sample)
-                            .context("Failed to write sample")?;
-                        sample_count += 1;
+                for erb in &mut event_ringbufs {
+                    while let Some(record) = erb.ringbuf.next_record() {
+                        if let Some(sample) = parse_sample_record(
+                            &record,
+                            erb.sample_period,
+                            erb.sample_type,
+                            erb.event_id,
+                        ) {
+                            writer
+                                .write_sample(&sample)
+                                .context("Failed to write sample")?;
+                            sample_count += 1;
+                        }
                     }
                 }
 
@@ -394,7 +455,10 @@ fn record_with_command(
 
             let status = waitpid(child, None).ok();
 
-            ringbuf.disable().ok();
+            for erb in &mut event_ringbufs {
+                erb.ringbuf.disable().ok();
+                total_lost += erb.ringbuf.lost_count();
+            }
 
             writer
                 .write_finished_round()
@@ -408,7 +472,7 @@ fn record_with_command(
                 "Recorded {} samples in {:.2}s ({} lost)",
                 sample_count,
                 elapsed.as_secs_f64(),
-                ringbuf.lost_count()
+                total_lost
             );
             eprintln!("Saved to: {}", output_path);
 
@@ -487,7 +551,7 @@ fn parse_sample_record(
 
 fn record_system_wide(
     cpus: Vec<u32>,
-    event: ParsedEvent,
+    events: Vec<ParsedEvent>,
     sample_period: u64,
     output_path: &str,
     call_graph: Option<u16>,
@@ -497,38 +561,52 @@ fn record_system_wide(
 
     eprintln!("Recording on CPUs: {:?}", cpus);
 
-    let attr = event_to_attr(&event.event, sample_period, callchain);
-    let sample_type = attr.sample_type;
-    let effective_period = effective_sample_period(&event.event, sample_period);
-
-    let mut ringbufs = Vec::with_capacity(cpus.len());
-    for &cpu in &cpus {
-        let ringbuf = crate::core::ringbuf::RingBuffer::from_event_for_cpu(
-            event.event.clone(),
-            cpu,
-            effective_period,
-            false,
-            callchain,
-            max_stack,
-        )
-        .with_context(|| format!("Failed to create ring buffer for CPU {}", cpu))?;
-        ringbufs.push((cpu, ringbuf));
-    }
-
-    for (cpu, ringbuf) in &mut ringbufs {
-        ringbuf
-            .enable()
-            .with_context(|| format!("Failed to enable ring buffer for CPU {}", cpu))?;
-    }
-
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
 
-    let event_ids: Vec<u64> = cpus.iter().map(|_| generate_event_id()).collect();
+    let mut attrs = Vec::with_capacity(events.len());
+    let mut all_event_ids: Vec<Vec<u64>> = Vec::with_capacity(events.len());
+    let mut event_ringbufs: Vec<(u64, RingBuffer, u64, u64)> = Vec::new();
+
+    for parsed in events.iter() {
+        let attr = event_to_attr(&parsed.event, sample_period, callchain);
+        let sample_type = attr.sample_type;
+        let effective_period = effective_sample_period(&parsed.event, sample_period);
+
+        let mut event_ids_for_attr = Vec::with_capacity(cpus.len());
+
+        for &cpu in &cpus {
+            let event_id = generate_event_id();
+            let ringbuf = RingBuffer::from_event_for_cpu(
+                parsed.event.clone(),
+                cpu,
+                effective_period,
+                false,
+                callchain,
+                max_stack,
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to create ring buffer for CPU {} and event {:?}",
+                    cpu, parsed.event
+                )
+            })?;
+
+            event_ids_for_attr.push(event_id);
+            event_ringbufs.push((event_id, ringbuf, effective_period, sample_type));
+        }
+
+        attrs.push(attr);
+        all_event_ids.push(event_ids_for_attr);
+    }
 
     writer
-        .initialize(&[attr], &[event_ids.clone()])
+        .initialize(&attrs, &all_event_ids)
         .context("Failed to initialize perf.data file")?;
+
+    for (_, ringbuf, _, _) in &mut event_ringbufs {
+        ringbuf.enable().context("Failed to enable sampling")?;
+    }
 
     let start_time = Instant::now();
     let mut sample_count = 0u64;
@@ -539,10 +617,10 @@ fn record_system_wide(
     eprintln!("Recording... Press Ctrl+C to stop.");
 
     while !SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
-        for (_cpu, ringbuf) in &mut ringbufs {
+        for (event_id, ringbuf, sample_period, sample_type) in &mut event_ringbufs {
             while let Some(record) = ringbuf.next_record() {
                 if let Some(sample) =
-                    parse_sample_record(&record, effective_period, sample_type, event_ids[0])
+                    parse_sample_record(&record, *sample_period, *sample_type, *event_id)
                 {
                     let process_key = (sample.pid, sample.tid);
                     if seen_processes.insert(process_key) {
@@ -565,7 +643,7 @@ fn record_system_wide(
         std::thread::sleep(Duration::from_micros(100));
     }
 
-    for (_cpu, ringbuf) in &mut ringbufs {
+    for (_, ringbuf, _, _) in &mut event_ringbufs {
         ringbuf.disable().ok();
         total_lost += ringbuf.lost_count();
     }
@@ -592,6 +670,7 @@ fn record_system_wide(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::parse_event;
 
     #[test]
     fn test_parse_event() {
