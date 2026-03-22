@@ -210,6 +210,7 @@ Rather than matching Linux perf feature-for-feature, perf-rs differentiates in a
 | **CI/CD integration** | ✅ Planned (regression detection) | ❌ Manual scripting required |
 | **Programmatic use** | ✅ Clean Rust API | ❌ Parse text output |
 | **Container-aware** | ✅ Planned (K8s native) | ❌ Requires manual setup |
+| **GUI application** | ✅ Planned (cross-platform) | ❌ TUI only |
 | **Deployment** | Single static binary | Requires system packages |
 
 ### Where perf-rs Excels
@@ -368,7 +369,7 @@ perf-rs targets a different use case than Linux perf:
 | CSV output | ❌ Planned | Export to CSV format |
 | Flame graphs | ❌ Planned | Visualization support |
 | Chrome tracing | ❌ Planned | Chrome DevTools format |
-| TUI interface | ❌ Planned | Interactive report viewer |
+| GUI application | ❌ Planned | Advanced cross-platform GUI for performance analysis |
 
 ### Out of Scope
 
@@ -393,6 +394,7 @@ The development roadmap prioritizes **differentiation over feature parity**. per
 | Remote server | ❌ Planned | Central collection and analysis server |
 | Multi-host profiling | ❌ Planned | Profile clusters simultaneously |
 | Regression detection | ❌ Planned | CI/CD performance gates |
+| GUI application | ❌ Planned | Advanced cross-platform GUI for performance analysis |
 
 ### Phase 1: Library API (v0.2) - Foundation
 
@@ -463,12 +465,38 @@ Scale to clusters and pipelines:
   - Chrome tracing format
   - pprof compatibility
 
+### Phase 5: GUI Application (v0.6+)
+
+Advanced cross-platform GUI for interactive performance analysis:
+
+- **Core Features**
+  - Real-time profiling dashboard
+  - Interactive flame graphs and call trees
+  - Timeline view with zoom/pan
+  - Multi-file comparison views
+
+- **Visualization**
+  - Hardware counter charts
+  - Memory access patterns
+  - CPU hot-spot heatmaps
+  - Call graph navigation
+
+- **Integration**
+  - Connect to remote agents
+  - Live profile streaming
+  - Export reports (PDF, HTML)
+  - Session management
+
+- **Technology**
+  - Cross-platform (Linux, macOS, Windows)
+  - Native performance (Rust + egui/iced)
+  - Offline analysis support
+
 ### Feature Parity Goals (Secondary)
 
 These Linux perf features are planned but secondary to differentiation:
 
 - **Event Modifiers** - `:u`, `:k`, `:p` modifiers
-- **TUI Interface** - Interactive report viewer
 
 ### Not Planned
 
