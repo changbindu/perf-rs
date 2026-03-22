@@ -157,9 +157,9 @@ pub enum Commands {
         #[arg(short, long, value_name = "FORMAT", default_value = "text")]
         format: String,
 
-        /// Show call chains
-        #[arg(short, long)]
-        callchain: bool,
+        /// Do not show call chains (shown by default)
+        #[arg(short = 'G', long)]
+        no_call_graph: bool,
     },
 }
 
@@ -253,11 +253,11 @@ mod tests {
 
     #[test]
     fn test_script_command_parsing() {
-        let cli = Cli::try_parse_from(["perf-rs", "script", "--callchain"]);
+        let cli = Cli::try_parse_from(["perf-rs", "script", "--no-call-graph"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         match cli.command {
-            Commands::Script { callchain, .. } => assert!(callchain),
+            Commands::Script { no_call_graph, .. } => assert!(no_call_graph),
             _ => panic!("Expected Script command"),
         }
     }

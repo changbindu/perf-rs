@@ -51,7 +51,7 @@ fn test_script_help() {
     let stdout = String::from_utf8_lossy(&result.stdout).to_string();
     assert!(result.status.success());
     assert!(stdout.contains("script"));
-    assert!(stdout.contains("--input") || stdout.contains("--callchain"));
+    assert!(stdout.contains("--input") || stdout.contains("--no-call-graph"));
 }
 
 #[test]
@@ -87,14 +87,14 @@ fn test_script_with_recorded_data() {
 }
 
 #[test]
-fn test_script_with_callchain() {
+fn test_script_shows_callgraph_by_default() {
     if !has_perf_permission() {
         eprintln!("Skipping test: requires perf permissions");
         return;
     }
 
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
-    let output_path = temp_dir.path().join("test_callchain.data");
+    let output_path = temp_dir.path().join("test_callgraph_default.data");
     let output_arg = output_path.to_str().unwrap();
 
     let (record_success, _stdout, record_stderr) = run_perf(&[
@@ -112,7 +112,38 @@ fn test_script_with_callchain() {
     assert!(record_success, "Record failed: {}", record_stderr);
 
     let (script_success, _script_stdout, script_stderr) =
-        run_perf(&["script", "--input", output_arg, "--callchain"]);
+        run_perf(&["script", "--input", output_arg]);
+
+    assert!(script_success, "Script failed: {}", script_stderr);
+}
+
+#[test]
+fn test_script_no_call_graph_option() {
+    if !has_perf_permission() {
+        eprintln!("Skipping test: requires perf permissions");
+        return;
+    }
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let output_path = temp_dir.path().join("test_no_callgraph.data");
+    let output_arg = output_path.to_str().unwrap();
+
+    let (record_success, _stdout, record_stderr) = run_perf(&[
+        "record",
+        "--output",
+        output_arg,
+        "--frequency",
+        "99",
+        "--call-graph",
+        "--",
+        "sleep",
+        "0.1",
+    ]);
+
+    assert!(record_success, "Record failed: {}", record_stderr);
+
+    let (script_success, _script_stdout, script_stderr) =
+        run_perf(&["script", "--input", output_arg, "--no-call-graph"]);
 
     assert!(script_success, "Script failed: {}", script_stderr);
 }

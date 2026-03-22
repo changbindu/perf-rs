@@ -136,13 +136,13 @@ fn run_command(args: &Cli) -> Result<()> {
         Commands::Script {
             input,
             format,
-            callchain,
+            no_call_graph,
         } => {
             debug!(
-                "Executing script command: input={:?}, format={}, callchain={}",
-                input, format, callchain
+                "Executing script command: input={:?}, format={}, no_call_graph={}",
+                input, format, no_call_graph
             );
-            commands::script::execute(input.as_deref(), format, *callchain, args.no_pager)
+            commands::script::execute(input.as_deref(), format, !no_call_graph, args.no_pager)
                 .context("Failed to generate script output")?;
         }
     }
