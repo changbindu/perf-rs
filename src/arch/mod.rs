@@ -6,7 +6,7 @@
 
 mod arm64;
 mod riscv64;
-mod x86_64;
+pub mod x86_64;
 
 use std::fmt;
 use std::fs;

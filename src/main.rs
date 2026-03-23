@@ -7,6 +7,7 @@ mod events;
 mod pager;
 mod symbols;
 mod tracepoint;
+mod unwind;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -95,11 +96,12 @@ fn run_command(args: &Cli) -> Result<()> {
             frequency,
             period,
             call_graph,
+            stack_size,
             command,
         } => {
             debug!(
-                "Executing record command: pid={:?}, all_cpus={}, cpu={:?}, output={:?}, event={:?}, frequency={:?}, period={:?}, call_graph={:?}, command={:?}",
-                pid, all_cpus, cpu, output, event, frequency, period, call_graph, command
+                "Executing record command: pid={:?}, all_cpus={}, cpu={:?}, output={:?}, event={:?}, frequency={:?}, period={:?}, call_graph={:?}, stack_size={}, command={:?}",
+                pid, all_cpus, cpu, output, event, frequency, period, call_graph, stack_size, command
             );
             commands::record::execute(
                 *pid,
@@ -110,6 +112,7 @@ fn run_command(args: &Cli) -> Result<()> {
                 *frequency,
                 *period,
                 *call_graph,
+                *stack_size,
                 command,
             )
             .context("Failed to record performance data")?;

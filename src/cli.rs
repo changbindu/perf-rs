@@ -2,7 +2,23 @@
 //!
 //! This module defines the command-line interface using clap derive macros.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+/// Call graph (stack unwinding) method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CallGraphMethod {
+    /// Frame pointer unwinding (default).
+    ///
+    /// Uses frame pointers to walk the call stack. Requires binaries
+    /// compiled with frame pointers enabled (-fno-omit-frame-pointer).
+    Fp,
+
+    /// DWARF unwinding using .eh_frame/.debug_frame sections.
+    ///
+    /// Uses DWARF debug information for more accurate stack unwinding.
+    /// Works with binaries compiled without frame pointers.
+    Dwarf,
+}
 
 /// Linux performance monitoring tool in Rust.
 #[derive(Parser, Debug)]
@@ -109,13 +125,21 @@ pub enum Commands {
         ///
         /// When enabled, each sample will include a stack trace showing
         /// the function call chain leading to the sampled instruction.
-        /// Use an optional value to specify the maximum stack depth (default: 127).
+        ///
+        /// Methods:
+        ///   fp     - Frame pointer unwinding (default, requires -fno-omit-frame-pointer)
+        ///   dwarf  - DWARF unwinding using debug info (works without frame pointers)
         ///
         /// Examples:
-        ///   -g           # Enable callgraph with default depth
-        ///   -g 50        # Enable callgraph with max 50 frames
-        #[arg(short = 'g', long, num_args = 0..=1, default_missing_value = "127")]
-        call_graph: Option<u16>,
+        ///   -g                    # Enable with default method (fp)
+        ///   --call-graph=fp       # Explicit frame pointer unwinding
+        ///   --call-graph=dwarf    # DWARF-based unwinding
+        #[arg(short = 'g', long, value_name = "METHOD", num_args = 0..=1, default_missing_value = "fp")]
+        call_graph: Option<CallGraphMethod>,
+
+        /// Maximum stack depth for call graph recording (default: 127)
+        #[arg(long, value_name = "N", default_value = "127")]
+        stack_size: u16,
 
         /// Command to execute (mutually exclusive with --pid)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -259,6 +283,83 @@ mod tests {
         match cli.command {
             Commands::Script { no_call_graph, .. } => assert!(no_call_graph),
             _ => panic!("Expected Script command"),
+        }
+    }
+
+    #[test]
+    fn test_call_graph_option_parsing() {
+        // Test -g shorthand (defaults to Fp)
+        let cli = Cli::try_parse_from(["perf-rs", "record", "-g", "--", "ls"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Record { call_graph, .. } => {
+                assert_eq!(call_graph, Some(CallGraphMethod::Fp));
+            }
+            _ => panic!("Expected Record command"),
+        }
+
+        // Test --call-graph=fp
+        let cli = Cli::try_parse_from(["perf-rs", "record", "--call-graph=fp", "--", "ls"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Record { call_graph, .. } => {
+                assert_eq!(call_graph, Some(CallGraphMethod::Fp));
+            }
+            _ => panic!("Expected Record command"),
+        }
+
+        // Test --call-graph=dwarf
+        let cli = Cli::try_parse_from(["perf-rs", "record", "--call-graph=dwarf", "--", "ls"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Record { call_graph, .. } => {
+                assert_eq!(call_graph, Some(CallGraphMethod::Dwarf));
+            }
+            _ => panic!("Expected Record command"),
+        }
+
+        // Test invalid value
+        let cli = Cli::try_parse_from(["perf-rs", "record", "--call-graph=invalid", "--", "ls"]);
+        assert!(cli.is_err());
+
+        // Test no call graph option
+        let cli = Cli::try_parse_from(["perf-rs", "record", "--", "ls"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Record { call_graph, .. } => {
+                assert_eq!(call_graph, None);
+            }
+            _ => panic!("Expected Record command"),
+        }
+    }
+
+    #[test]
+    fn test_stack_size_option() {
+        // Test default stack size
+        let cli = Cli::try_parse_from(["perf-rs", "record", "-g", "--", "ls"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Record { stack_size, .. } => {
+                assert_eq!(stack_size, 127);
+            }
+            _ => panic!("Expected Record command"),
+        }
+
+        // Test custom stack size
+        let cli =
+            Cli::try_parse_from(["perf-rs", "record", "-g", "--stack-size", "50", "--", "ls"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Record { stack_size, .. } => {
+                assert_eq!(stack_size, 50);
+            }
+            _ => panic!("Expected Record command"),
         }
     }
 }

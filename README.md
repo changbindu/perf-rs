@@ -15,6 +15,7 @@ A Linux performance monitoring tool written in Rust. It provides functionality s
 - **Trace Dumping**: Export raw trace data in human-readable or JSON format
 - **Architecture Support**: Native support for x86_64, ARM64, and RISC-V 64-bit
 - **Symbol Resolution**: Resolve symbols from ELF binaries and kernel symbols
+- **DWARF Call Stack Unwinding**: Accurate stack traces without frame pointers
 - **Sysfs Integration**: Discover events from sysfs for architecture-specific PMU events
 
 ## Requirements
@@ -163,6 +164,35 @@ sudo perf-rs record --event sched:sched_switch -- ./your_program
 
 # Record scheduler tracepoints
 sudo perf-rs record --event sched:sched_switch,sched:sched_process_exec -- ./your_program
+
+# Record with call graph (frame pointer unwinding)
+sudo perf-rs record --call-graph=fp --frequency 99 -- ./your_program
+
+# Record with DWARF call stack unwinding (works without frame pointers)
+sudo perf-rs record --call-graph=dwarf --frequency 99 -- ./your_program
+
+# Shorthand for frame pointer unwinding
+sudo perf-rs record -g --frequency 99 -- ./your_program
+```
+
+#### Call Graph Options
+
+The `--call-graph` option enables stack trace recording for each sample. Two methods are available:
+
+- **`fp`** (frame pointer): Uses frame pointers to walk the call stack. Requires binaries compiled with `-fno-omit-frame-pointer`. This is the default when using `-g` without a value.
+
+- **`dwarf`**: Uses DWARF debug information (`.eh_frame`/`.debug_frame` sections) for stack unwinding. Works with binaries compiled without frame pointers. Falls back to frame pointer unwinding if DWARF unwinding fails.
+
+```bash
+# Frame pointer unwinding (default)
+sudo perf-rs record -g -- ./your_program
+sudo perf-rs record --call-graph=fp -- ./your_program
+
+# DWARF unwinding (no frame pointers needed)
+sudo perf-rs record --call-graph=dwarf -- ./your_program
+
+# Custom stack depth (default: 127)
+sudo perf-rs record --call-graph=dwarf --stack-size 256 -- ./your_program
 ```
 
 ### Analyze Recorded Data
@@ -358,7 +388,7 @@ perf-rs targets a different use case than Linux perf:
 | Per-CPU (`-C/--cpu`) | ✅ Complete | Specific CPUs |
 | System-wide (`-a/--all-cpus`) | ✅ Complete | All CPUs |
 | Command execution | ✅ Complete | `-- <cmd>` profiling |
-| Call graphs (`-g`) | ✅ Complete | Frame pointer unwinding |
+| Call graphs (`-g`) | ✅ Complete | Frame pointer and DWARF unwinding |
 | Multiple events (`-e e1,e2`) | ✅ Complete | Record multiple events simultaneously |
 | Sample: IP, TID, TIME, PERIOD | ✅ Complete | Core sample data |
 | Sample: CPU, CALLCHAIN | ✅ Complete | Extended sample data |
@@ -408,7 +438,6 @@ perf-rs targets a different use case than Linux perf:
 |---------|--------|
 | BPF/eBPF program support | Requires kernel integration beyond profiling |
 | Kernel module requirements | User-space tool design |
-| DWARF call stack unwinding | Frame pointer sufficient for most cases |
 
 **Status Legend**: ✅ Complete | ❌ Planned | ⏸️ Not Planned
 

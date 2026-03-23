@@ -321,6 +321,16 @@ impl PerfEventAttr {
         self
     }
 
+    pub fn with_sample_regs_user(mut self, regs: u64) -> Self {
+        self.sample_regs_user = regs;
+        self
+    }
+
+    pub fn with_sample_stack_user(mut self, size: u32) -> Self {
+        self.sample_stack_user = size;
+        self
+    }
+
     fn set_bitfield_bit(&mut self, bit: u32, value: bool) {
         if value {
             self.bitfields |= 1 << bit;
@@ -483,6 +493,8 @@ pub const PERF_SAMPLE_CPU: u64 = 1 << 7;
 pub const PERF_SAMPLE_PERIOD: u64 = 1 << 8;
 pub const PERF_SAMPLE_STREAM_ID: u64 = 1 << 9;
 pub const PERF_SAMPLE_RAW: u64 = 1 << 10;
+pub const PERF_SAMPLE_REGS_USER: u64 = 1 << 11;
+pub const PERF_SAMPLE_STACK_USER: u64 = 1 << 12;
 pub const PERF_SAMPLE_IDENTIFIER: u64 = 1 << 16;
 
 /// PERF_RECORD_MMAP event (type 1)
@@ -616,6 +628,20 @@ impl CommEvent {
     }
 }
 
+/// Parsed user registers from PERF_SAMPLE_REGS_USER
+#[derive(Debug, Clone, Default)]
+pub struct RegsUser {
+    pub abi: u64,
+    pub regs: Vec<u64>,
+}
+
+/// Parsed user stack from PERF_SAMPLE_STACK_USER
+#[derive(Debug, Clone, Default)]
+pub struct StackUser {
+    pub data: Vec<u8>,
+    pub dyn_size: u64,
+}
+
 /// PERF_RECORD_SAMPLE event (type 9)
 ///
 /// Records a sample event with variable fields based on sample_type.
@@ -631,6 +657,8 @@ pub struct SampleEvent {
     pub period: u64,
     pub callchain: Option<Vec<u64>>,
     pub cpu: Option<u32>,
+    pub regs_user: Option<RegsUser>,
+    pub stack_user: Option<StackUser>,
 }
 
 impl SampleEvent {
@@ -644,6 +672,8 @@ impl SampleEvent {
         callchain: Option<Vec<u64>>,
         cpu: Option<u32>,
         event_id: u64,
+        regs_user: Option<RegsUser>,
+        stack_user: Option<StackUser>,
     ) -> Self {
         let mut size = 8u16;
 
@@ -680,6 +710,8 @@ impl SampleEvent {
             period,
             callchain,
             cpu,
+            regs_user,
+            stack_user,
         }
     }
 
@@ -839,6 +871,8 @@ impl SampleEvent {
             period,
             callchain,
             cpu: None,
+            regs_user: None,
+            stack_user: None,
         })
     }
 }
@@ -1292,6 +1326,8 @@ mod tests {
             None,
             None,
             1024,
+            None,
+            None,
         );
 
         assert_eq!(sample.header.type_, PERF_RECORD_SAMPLE);
@@ -1344,6 +1380,8 @@ mod tests {
             None,
             None,
             1024,
+            None,
+            None,
         );
 
         let mut buffer = Vec::new();
@@ -1373,6 +1411,8 @@ mod tests {
             Some(callchain.clone()),
             None,
             1024,
+            None,
+            None,
         );
 
         let mut buffer = Vec::new();
@@ -1437,6 +1477,8 @@ mod tests {
             None,
             None,
             1024,
+            None,
+            None,
         );
 
         let size = sample.calculate_size();
@@ -1474,6 +1516,8 @@ mod tests {
             None,
             None,
             1024,
+            None,
+            None,
         );
         writer.write_sample(&sample).unwrap();
 
@@ -1584,6 +1628,8 @@ mod tests {
             None,
             None,
             1024,
+            None,
+            None,
         );
 
         let mut buffer = Vec::new();
@@ -1618,6 +1664,8 @@ mod tests {
             Some(callchain.clone()),
             None,
             1024,
+            None,
+            None,
         );
 
         let mut buffer = Vec::new();
@@ -1651,6 +1699,8 @@ mod tests {
             None,
             None,
             1024,
+            None,
+            None,
         );
 
         let mut buffer = Vec::new();
@@ -1683,6 +1733,8 @@ mod tests {
             None,
             None,
             2048,
+            None,
+            None,
         );
 
         let mut buffer = Vec::new();
@@ -1718,6 +1770,8 @@ mod tests {
             Some(callchain.clone()),
             None,
             4096,
+            None,
+            None,
         );
 
         let mut buffer = Vec::new();

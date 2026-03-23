@@ -12,5 +12,6 @@ pub mod events;
 pub mod pager;
 pub mod symbols;
 pub mod tracepoint;
+pub mod unwind;
 
 pub use error::{PerfError, Result};

@@ -1,6 +1,28 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Errors that can occur during DWARF-based stack unwinding.
+#[derive(Debug, Error)]
+pub enum UnwindError {
+    #[error("No unwind information found for address 0x{address:x}")]
+    NoEhFrame { address: u64 },
+
+    #[error("Invalid CFI data: {message}")]
+    InvalidCfi { message: String },
+
+    #[error("Failed to read stack at address 0x{address:x}")]
+    StackReadFailed { address: u64 },
+
+    #[error("Stack unwinding exceeded maximum depth of {depth}")]
+    MaxDepthExceeded { depth: usize },
+
+    #[error("Binary file not found: {path}")]
+    BinaryNotFound { path: PathBuf },
+
+    #[error("Register value not available: {register}")]
+    RegisterNotFound { register: u16 },
+}
+
 #[derive(Debug, Error)]
 pub enum PerfError {
     #[error("Failed to set up performance counter: {source}")]
@@ -108,6 +130,61 @@ pub enum PerfError {
     Tracepoint {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    #[error("Stack unwinding failed: {0}")]
+    Unwind(#[from] UnwindError),
 }
 
 pub type Result<T> = std::result::Result<T, PerfError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unwind_error_display() {
+        assert_eq!(
+            UnwindError::NoEhFrame { address: 0x1234 }.to_string(),
+            "No unwind information found for address 0x1234"
+        );
+
+        assert_eq!(
+            UnwindError::InvalidCfi {
+                message: "bad CFI".to_string()
+            }
+            .to_string(),
+            "Invalid CFI data: bad CFI"
+        );
+
+        assert_eq!(
+            UnwindError::StackReadFailed { address: 0xabcd }.to_string(),
+            "Failed to read stack at address 0xabcd"
+        );
+
+        assert_eq!(
+            UnwindError::MaxDepthExceeded { depth: 100 }.to_string(),
+            "Stack unwinding exceeded maximum depth of 100"
+        );
+
+        assert_eq!(
+            UnwindError::BinaryNotFound {
+                path: PathBuf::from("/usr/bin/test")
+            }
+            .to_string(),
+            "Binary file not found: /usr/bin/test"
+        );
+
+        assert_eq!(
+            UnwindError::RegisterNotFound { register: 7 }.to_string(),
+            "Register value not available: 7"
+        );
+    }
+
+    #[test]
+    fn test_unwind_error_into_perf_error() {
+        let unwind_err = UnwindError::MaxDepthExceeded { depth: 50 };
+        let perf_err: PerfError = unwind_err.into();
+        assert!(matches!(perf_err, PerfError::Unwind(_)));
+        assert!(perf_err.to_string().contains("maximum depth"));
+    }
+}

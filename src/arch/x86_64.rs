@@ -1,8 +1,114 @@
-//! x86_64 (AMD64) architecture-specific PMU events
+//! x86_64 (AMD64) architecture-specific PMU events and register definitions
 //!
-//! This module provides Intel and AMD specific performance events for x86_64 processors.
+//! This module provides Intel and AMD specific performance events for x86_64 processors,
+//! as well as register definitions for DWARF stack unwinding.
 
 use super::{PmuEvent, SysfsEventDiscovery};
+
+// ============================================================================
+// x86_64 Register Definitions (matching Linux perf_regs.h)
+// ============================================================================
+
+/// x86_64 register indices matching Linux kernel perf_regs.h
+///
+/// These indices are used for register sampling and DWARF unwinding.
+/// Reference: linux/arch/x86/include/uapi/asm/perf_regs.h
+pub mod regs {
+    /// RAX register (accumulator)
+    pub const AX: u32 = 0;
+    /// RBX register (base, callee-saved)
+    pub const BX: u32 = 1;
+    /// RCX register (counter)
+    pub const CX: u32 = 2;
+    /// RDX register (data)
+    pub const DX: u32 = 3;
+    /// RSI register (source index)
+    pub const SI: u32 = 4;
+    /// RDI register (destination index)
+    pub const DI: u32 = 5;
+    /// RBP register (base pointer, callee-saved, frame pointer)
+    pub const BP: u32 = 6;
+    /// RSP register (stack pointer)
+    pub const SP: u32 = 7;
+    /// RIP register (instruction pointer)
+    pub const IP: u32 = 8;
+    /// RFLAGS register
+    pub const FLAGS: u32 = 9;
+    /// CS register (code segment)
+    pub const CS: u32 = 10;
+    /// SS register (stack segment)
+    pub const SS: u32 = 11;
+    /// DS register (data segment)
+    pub const DS: u32 = 12;
+    /// ES register (extra segment)
+    pub const ES: u32 = 13;
+    /// FS register
+    pub const FS: u32 = 14;
+    /// GS register
+    pub const GS: u32 = 15;
+    /// R8 register
+    pub const R8: u32 = 16;
+    /// R9 register
+    pub const R9: u32 = 17;
+    /// R10 register
+    pub const R10: u32 = 18;
+    /// R11 register
+    pub const R11: u32 = 19;
+    /// R12 register (callee-saved)
+    pub const R12: u32 = 20;
+    /// R13 register (callee-saved)
+    pub const R13: u32 = 21;
+    /// R14 register (callee-saved)
+    pub const R14: u32 = 22;
+    /// R15 register (callee-saved)
+    pub const R15: u32 = 23;
+
+    /// Maximum number of x86_64 general-purpose registers
+    pub const MAX: u32 = 24;
+}
+
+/// Mask for registers needed for DWARF stack unwinding.
+///
+/// Includes:
+/// - IP (instruction pointer) - return address
+/// - SP (stack pointer) - stack frame base
+/// - BP (base pointer) - frame pointer
+/// - BX, R12-R15 (callee-saved registers) - preserved across calls
+///
+/// These registers are sufficient for frame pointer and DWARF unwinding.
+pub const X86_64_REGS_DWARF: u64 = (1 << regs::IP)
+    | (1 << regs::SP)
+    | (1 << regs::BP)
+    | (1 << regs::BX)
+    | (1 << regs::R12)
+    | (1 << regs::R13)
+    | (1 << regs::R14)
+    | (1 << regs::R15);
+
+/// Mask for callee-saved registers in x86_64 ABI.
+///
+/// According to the System V AMD64 ABI, these registers must be preserved
+/// by the callee (function being called):
+/// - RBX (base register)
+/// - RBP (base pointer / frame pointer)
+/// - R12, R13, R14, R15
+///
+/// These are critical for stack unwinding as they contain values from
+/// the caller's frame.
+pub const X86_64_CALLEE_SAVED: u64 = (1 << regs::BX)
+    | (1 << regs::BP)
+    | (1 << regs::R12)
+    | (1 << regs::R13)
+    | (1 << regs::R14)
+    | (1 << regs::R15);
+
+/// Returns the register mask for x86_64 DWARF unwinding.
+///
+/// This mask indicates which registers should be captured during sampling
+/// to enable stack unwinding.
+pub fn x86_64_reg_mask() -> u64 {
+    X86_64_REGS_DWARF
+}
 
 /// Intel-specific PMU events
 fn get_intel_events() -> Vec<PmuEvent> {
@@ -194,5 +300,41 @@ mod tests {
         assert!(events.iter().any(|e| e.name == "cpu-cycles"));
         assert!(events.iter().any(|e| e.name == "inst_retired.any"));
         assert!(events.iter().any(|e| e.name == "retired_instr"));
+    }
+
+    #[test]
+    fn test_x86_64_reg_mask() {
+        let mask = x86_64_reg_mask();
+
+        assert_ne!(mask & (1 << regs::IP), 0);
+        assert_ne!(mask & (1 << regs::SP), 0);
+        assert_ne!(mask & (1 << regs::BP), 0);
+        assert_ne!(mask & (1 << regs::BX), 0);
+        assert_ne!(mask & (1 << regs::R12), 0);
+        assert_ne!(mask & (1 << regs::R13), 0);
+        assert_ne!(mask & (1 << regs::R14), 0);
+        assert_ne!(mask & (1 << regs::R15), 0);
+
+        assert_eq!(mask & (1 << regs::AX), 0);
+        assert_eq!(mask & (1 << regs::CX), 0);
+        assert_eq!(mask & (1 << regs::DX), 0);
+        assert_eq!(mask & (1 << regs::SI), 0);
+        assert_eq!(mask & (1 << regs::DI), 0);
+
+        assert_eq!(mask, X86_64_REGS_DWARF);
+    }
+
+    #[test]
+    fn test_x86_64_callee_saved_mask() {
+        let mask = X86_64_CALLEE_SAVED;
+
+        assert_ne!(mask & (1 << regs::BX), 0);
+        assert_ne!(mask & (1 << regs::BP), 0);
+        assert_ne!(mask & (1 << regs::R12), 0);
+        assert_ne!(mask & (1 << regs::R13), 0);
+        assert_ne!(mask & (1 << regs::R14), 0);
+        assert_ne!(mask & (1 << regs::R15), 0);
+
+        assert_eq!(mask & X86_64_REGS_DWARF, mask);
     }
 }

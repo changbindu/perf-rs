@@ -1,15 +1,21 @@
 //! Performance recording command - collects samples for profiling.
 
+use crate::arch::x86_64::X86_64_REGS_DWARF;
+use crate::cli::CallGraphMethod;
 use crate::core::cpu::{get_online_cpus, parse_cpu_list, validate_cpu_ids};
-use crate::core::perf_data::{CommEvent, MmapEvent, PerfDataWriter, PerfEventAttr, SampleEvent};
+use crate::core::perf_data::{
+    CommEvent, MmapEvent, PerfDataWriter, PerfEventAttr, RegsUser, SampleEvent, StackUser,
+};
 use crate::core::privilege::check_privilege;
 use crate::core::ringbuf::RingBuffer;
 use crate::error::PerfError;
 use crate::events::{parse_events, Hardware, ParsedEvent, PerfEvent};
+use crate::unwind::{DwarfUnwinder, UserRegisters};
 use anyhow::{Context, Result};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{execvp, fork, ForkResult, Pid};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -38,8 +44,15 @@ fn effective_sample_period(event: &PerfEvent, sample_period: u64) -> u64 {
     }
 }
 
+/// Default stack size for DWARF unwinding (8KB)
+const DEFAULT_STACK_SIZE: u32 = 8192;
+
 /// Convert a PerfEvent to PerfEventAttr for Linux perf format
-fn event_to_attr(event: &PerfEvent, sample_period: u64, callchain: bool) -> PerfEventAttr {
+fn event_to_attr(
+    event: &PerfEvent,
+    sample_period: u64,
+    call_graph: Option<CallGraphMethod>,
+) -> PerfEventAttr {
     let (attr_type, config) = match event {
         PerfEvent::Hardware(h) => (0u32, u64::from(*h)),
         PerfEvent::Software(s) => (1u32, u64::from(*s)),
@@ -60,15 +73,32 @@ fn event_to_attr(event: &PerfEvent, sample_period: u64, callchain: bool) -> Perf
         | crate::core::perf_data::PERF_SAMPLE_PERIOD
         | crate::core::perf_data::PERF_SAMPLE_IDENTIFIER;
 
-    if callchain {
-        sample_type |= crate::core::perf_data::PERF_SAMPLE_CALLCHAIN;
-    }
-
-    PerfEventAttr::new(attr_type, config, sample_type)
+    let mut attr = PerfEventAttr::new(attr_type, config, sample_type)
         .with_sample_period(effective_period)
         .with_comm(true)
         .with_mmap(true)
-        .with_sample_id_all(true)
+        .with_sample_id_all(true);
+
+    match call_graph {
+        Some(CallGraphMethod::Fp) => {
+            sample_type |= crate::core::perf_data::PERF_SAMPLE_CALLCHAIN;
+            attr.sample_type = sample_type;
+        }
+        Some(CallGraphMethod::Dwarf) => {
+            // Request both DWARF data (regs + stack) AND FP callchain for fallback
+            // This allows us to fall back to FP unwinding when DWARF fails
+            sample_type |= crate::core::perf_data::PERF_SAMPLE_REGS_USER;
+            sample_type |= crate::core::perf_data::PERF_SAMPLE_STACK_USER;
+            sample_type |= crate::core::perf_data::PERF_SAMPLE_CALLCHAIN;
+            attr.sample_type = sample_type;
+            attr = attr
+                .with_sample_regs_user(X86_64_REGS_DWARF)
+                .with_sample_stack_user(DEFAULT_STACK_SIZE);
+        }
+        None => {}
+    }
+
+    attr
 }
 
 /// Get process command name from /proc/PID/comm
@@ -156,7 +186,8 @@ pub fn execute(
     event: Option<&str>,
     frequency: Option<u64>,
     period: Option<u64>,
-    call_graph: Option<u16>,
+    call_graph: Option<CallGraphMethod>,
+    stack_size: u16,
     command: &[String],
 ) -> Result<()> {
     let is_system_wide = all_cpus || cpu.is_some();
@@ -228,11 +259,32 @@ pub fn execute(
             cpus
         };
 
-        record_system_wide(cpus, events, sample_period, output_path, call_graph)
+        record_system_wide(
+            cpus,
+            events,
+            sample_period,
+            output_path,
+            call_graph,
+            stack_size,
+        )
     } else if let Some(target_pid) = pid {
-        record_with_pid(target_pid, events, sample_period, output_path, call_graph)
+        record_with_pid(
+            target_pid,
+            events,
+            sample_period,
+            output_path,
+            call_graph,
+            stack_size,
+        )
     } else {
-        record_with_command(command, events, sample_period, output_path, call_graph)
+        record_with_command(
+            command,
+            events,
+            sample_period,
+            output_path,
+            call_graph,
+            stack_size,
+        )
     }
 }
 
@@ -241,11 +293,9 @@ fn record_with_pid(
     events: Vec<ParsedEvent>,
     sample_period: u64,
     output_path: &str,
-    call_graph: Option<u16>,
+    call_graph: Option<CallGraphMethod>,
+    max_stack: u16,
 ) -> Result<()> {
-    let callchain = call_graph.is_some();
-    let max_stack = call_graph.unwrap_or(0);
-
     eprintln!("Recording process {} ...", pid);
 
     let mut writer = PerfDataWriter::from_path(output_path)
@@ -255,8 +305,11 @@ fn record_with_pid(
     let mut all_event_ids = Vec::with_capacity(events.len());
     let mut event_ringbufs: Vec<EventRingBuffer> = Vec::new();
 
+    // For FP mode, kernel does unwinding; for DWARF mode, we do it in user-space
+    let kernel_callchain = matches!(call_graph, Some(CallGraphMethod::Fp));
+
     for parsed in events.iter() {
-        let attr = event_to_attr(&parsed.event, sample_period, callchain);
+        let attr = event_to_attr(&parsed.event, sample_period, call_graph);
         let sample_type = attr.sample_type;
         let effective_period = effective_sample_period(&parsed.event, sample_period);
         let event_id = generate_event_id();
@@ -272,7 +325,7 @@ fn record_with_pid(
             pid as i32,
             effective_period,
             false,
-            callchain,
+            kernel_callchain,
             max_stack,
             cpu,
         )
@@ -298,6 +351,26 @@ fn record_with_pid(
         erb.ringbuf.enable().context("Failed to enable sampling")?;
     }
 
+    let mut unwinder = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
+        let mut u = DwarfUnwinder::new();
+        if let Ok(maps_content) = std::fs::read_to_string(format!("/proc/{}/maps", pid)) {
+            for line in maps_content.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 6 {
+                    if let Some(filename) = parts.get(5) {
+                        let path = PathBuf::from(filename);
+                        if path.exists() && !filename.starts_with('[') {
+                            let _ = u.load_binary(&path);
+                        }
+                    }
+                }
+            }
+        }
+        Some(u)
+    } else {
+        None
+    };
+
     let start_time = Instant::now();
     let mut sample_count = 0u64;
     let mut total_lost = 0u64;
@@ -312,6 +385,12 @@ fn record_with_pid(
                 if let Some(sample) =
                     parse_sample_record(&record, erb.sample_period, erb.sample_type, erb.event_id)
                 {
+                    let sample = if let Some(ref unwinder) = unwinder {
+                        unwind_sample_dwarf(sample, unwinder)
+                    } else {
+                        sample
+                    };
+
                     writer
                         .write_sample(&sample)
                         .context("Failed to write sample")?;
@@ -352,10 +431,10 @@ fn record_with_command(
     events: Vec<ParsedEvent>,
     sample_period: u64,
     output_path: &str,
-    call_graph: Option<u16>,
+    call_graph: Option<CallGraphMethod>,
+    max_stack: u16,
 ) -> Result<()> {
-    let callchain = call_graph.is_some();
-    let max_stack = call_graph.unwrap_or(0);
+    let kernel_callchain = matches!(call_graph, Some(CallGraphMethod::Fp));
 
     match unsafe { fork() }? {
         ForkResult::Parent { child } => {
@@ -370,7 +449,7 @@ fn record_with_command(
             let mut event_ringbufs: Vec<EventRingBuffer> = Vec::new();
 
             for parsed in events.iter() {
-                let attr = event_to_attr(&parsed.event, sample_period, callchain);
+                let attr = event_to_attr(&parsed.event, sample_period, call_graph);
                 let sample_type = attr.sample_type;
                 let effective_period = effective_sample_period(&parsed.event, sample_period);
                 let event_id = generate_event_id();
@@ -386,7 +465,7 @@ fn record_with_command(
                     child.as_raw(),
                     effective_period,
                     false,
-                    callchain,
+                    kernel_callchain,
                     max_stack,
                     cpu,
                 )
@@ -417,6 +496,28 @@ fn record_with_command(
 
             kill(child, Signal::SIGCONT).context("Failed to continue child process")?;
 
+            let mut unwinder = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
+                let mut u = DwarfUnwinder::new();
+                if let Ok(maps_content) =
+                    std::fs::read_to_string(format!("/proc/{}/maps", child.as_raw()))
+                {
+                    for line in maps_content.lines() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 6 {
+                            if let Some(filename) = parts.get(5) {
+                                let path = PathBuf::from(filename);
+                                if path.exists() && !filename.starts_with('[') {
+                                    let _ = u.load_binary(&path);
+                                }
+                            }
+                        }
+                    }
+                }
+                Some(u)
+            } else {
+                None
+            };
+
             let start_time = Instant::now();
             let mut sample_count = 0u64;
             let mut total_lost = 0u64;
@@ -442,6 +543,12 @@ fn record_with_command(
                             erb.sample_type,
                             erb.event_id,
                         ) {
+                            let sample = if let Some(ref unwinder) = unwinder {
+                                unwind_sample_dwarf(sample, unwinder)
+                            } else {
+                                sample
+                            };
+
                             writer
                                 .write_sample(&sample)
                                 .context("Failed to write sample")?;
@@ -513,6 +620,81 @@ fn process_exists(pid: u32) -> bool {
     std::path::Path::new(&format!("/proc/{}", pid)).exists()
 }
 
+/// Perform DWARF-based stack unwinding on a sample.
+///
+/// This function takes a sample with regs_user and stack_user data,
+/// performs DWARF unwinding, and returns a new sample with the callchain
+/// populated from the unwinding results.
+///
+/// # Fallback Behavior
+///
+/// When DWARF unwinding fails (e.g., no .eh_frame, stack read errors),
+/// this function falls back to the kernel-provided FP callchain if available.
+/// This ensures users always get some callchain data even when DWARF fails.
+fn unwind_sample_dwarf(sample: SampleEvent, unwinder: &DwarfUnwinder) -> SampleEvent {
+    if sample.regs_user.is_none() || sample.stack_user.is_none() {
+        log::warn!("DWARF unwinding skipped: missing regs_user or stack_user data");
+        return sample;
+    }
+
+    let regs = sample.regs_user.as_ref().unwrap();
+    let stack = sample.stack_user.as_ref().unwrap();
+
+    if regs.abi == 0 || regs.regs.is_empty() || stack.data.is_empty() {
+        log::warn!("DWARF unwinding skipped: empty registers or stack data");
+        return sample;
+    }
+
+    let mut user_regs = UserRegisters::new();
+
+    let regs_mask = X86_64_REGS_DWARF;
+    for (i, &value) in regs.regs.iter().enumerate() {
+        let mut bit_pos = 0u32;
+        let mut reg_idx = 0u32;
+        let mut found = false;
+
+        while bit_pos < 64 {
+            if regs_mask & (1u64 << bit_pos) != 0 {
+                if reg_idx as usize == i {
+                    user_regs.set(bit_pos as u16, value);
+                    found = true;
+                    break;
+                }
+                reg_idx += 1;
+            }
+            bit_pos += 1;
+        }
+
+        if !found {
+            break;
+        }
+    }
+
+    let stack_base = user_regs.sp().unwrap_or(0);
+
+    match unwinder.unwind_stack(sample.ip, &user_regs, &stack.data, stack_base) {
+        Ok(dwarf_callchain) => {
+            let mut new_sample = sample.clone();
+            new_sample.callchain = Some(dwarf_callchain);
+            new_sample
+        }
+        Err(e) => {
+            log::warn!(
+                "DWARF unwinding failed, falling back to FP callchain: {}",
+                e
+            );
+
+            if sample.callchain.is_some() {
+                log::debug!("Using kernel FP callchain as fallback");
+                sample
+            } else {
+                log::warn!("No FP callchain available, sample will have no callchain");
+                sample
+            }
+        }
+    }
+}
+
 fn parse_sample_record(
     record: &perf_event::Record<'_>,
     sample_period: u64,
@@ -533,6 +715,16 @@ fn parse_sample_record(
 
             let callchain = sample.callchain().map(|cc| cc.to_vec());
 
+            let regs_user = sample.regs_user().map(|regs| RegsUser {
+                abi: regs.abi.0,
+                regs: regs.regs.to_vec(),
+            });
+
+            let stack_user = sample.stack_user().map(|data| StackUser {
+                data: data.to_vec(),
+                dyn_size: data.len() as u64,
+            });
+
             Some(SampleEvent::new(
                 sample_type,
                 time,
@@ -543,6 +735,8 @@ fn parse_sample_record(
                 callchain,
                 cpu,
                 event_id,
+                regs_user,
+                stack_user,
             ))
         }
         _ => None,
@@ -554,12 +748,12 @@ fn record_system_wide(
     events: Vec<ParsedEvent>,
     sample_period: u64,
     output_path: &str,
-    call_graph: Option<u16>,
+    call_graph: Option<CallGraphMethod>,
+    max_stack: u16,
 ) -> Result<()> {
-    let callchain = call_graph.is_some();
-    let max_stack = call_graph.unwrap_or(0);
-
     eprintln!("Recording on CPUs: {:?}", cpus);
+
+    let kernel_callchain = matches!(call_graph, Some(CallGraphMethod::Fp));
 
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
@@ -569,7 +763,7 @@ fn record_system_wide(
     let mut event_ringbufs: Vec<(u64, RingBuffer, u64, u64)> = Vec::new();
 
     for parsed in events.iter() {
-        let attr = event_to_attr(&parsed.event, sample_period, callchain);
+        let attr = event_to_attr(&parsed.event, sample_period, call_graph);
         let sample_type = attr.sample_type;
         let effective_period = effective_sample_period(&parsed.event, sample_period);
 
@@ -582,7 +776,7 @@ fn record_system_wide(
                 cpu,
                 effective_period,
                 false,
-                callchain,
+                kernel_callchain,
                 max_stack,
             )
             .with_context(|| {
@@ -608,6 +802,12 @@ fn record_system_wide(
         ringbuf.enable().context("Failed to enable sampling")?;
     }
 
+    let mut unwinder = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
+        Some(DwarfUnwinder::new())
+    } else {
+        None
+    };
+
     let start_time = Instant::now();
     let mut sample_count = 0u64;
     let mut total_lost = 0u64;
@@ -630,7 +830,31 @@ fn record_system_wide(
                                 sample.pid, e
                             );
                         }
+
+                        if let Some(ref mut unwinder) = unwinder {
+                            if let Ok(maps_content) =
+                                std::fs::read_to_string(format!("/proc/{}/maps", sample.pid))
+                            {
+                                for line in maps_content.lines() {
+                                    let parts: Vec<&str> = line.split_whitespace().collect();
+                                    if parts.len() >= 6 {
+                                        if let Some(filename) = parts.get(5) {
+                                            let path = PathBuf::from(filename);
+                                            if path.exists() && !filename.starts_with('[') {
+                                                let _ = unwinder.load_binary(&path);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+
+                    let sample = if let Some(ref unwinder) = unwinder {
+                        unwind_sample_dwarf(sample, unwinder)
+                    } else {
+                        sample
+                    };
 
                     writer
                         .write_sample(&sample)
@@ -697,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_execute_no_command() {
-        let result = execute(None, false, None, None, None, None, None, None, &[]);
+        let result = execute(None, false, None, None, None, None, None, None, 127, &[]);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -714,5 +938,124 @@ mod tests {
     #[test]
     fn test_privilege_check() {
         let _ = check_privilege();
+    }
+
+    #[test]
+    fn test_fallback_to_fp() {
+        let unwinder = DwarfUnwinder::new();
+
+        let fp_callchain = vec![0x1000u64, 0x2000u64, 0x3000u64];
+
+        let sample = SampleEvent::new(
+            crate::core::perf_data::PERF_SAMPLE_IP
+                | crate::core::perf_data::PERF_SAMPLE_TID
+                | crate::core::perf_data::PERF_SAMPLE_TIME
+                | crate::core::perf_data::PERF_SAMPLE_PERIOD
+                | crate::core::perf_data::PERF_SAMPLE_CALLCHAIN
+                | crate::core::perf_data::PERF_SAMPLE_REGS_USER
+                | crate::core::perf_data::PERF_SAMPLE_STACK_USER,
+            12345,
+            0x4000,
+            1234,
+            1234,
+            1000000,
+            Some(fp_callchain.clone()),
+            None,
+            1,
+            Some(RegsUser {
+                abi: 1,
+                regs: vec![
+                    0x1000, 0x2000, 0x3000, 0x4000, 0x5000, 0x6000, 0x7000, 0x8000, 0x9000,
+                ],
+            }),
+            Some(StackUser {
+                data: vec![0u8; 1024],
+                dyn_size: 1024,
+            }),
+        );
+
+        let result = unwind_sample_dwarf(sample, &unwinder);
+
+        assert!(
+            result.callchain.is_some(),
+            "Should have callchain after fallback"
+        );
+        let result_callchain = result.callchain.unwrap();
+        assert_eq!(
+            result_callchain, fp_callchain,
+            "Should fall back to FP callchain when DWARF fails"
+        );
+    }
+
+    #[test]
+    fn test_fallback_to_fp_no_fp_callchain() {
+        let unwinder = DwarfUnwinder::new();
+
+        let sample = SampleEvent::new(
+            crate::core::perf_data::PERF_SAMPLE_IP
+                | crate::core::perf_data::PERF_SAMPLE_TID
+                | crate::core::perf_data::PERF_SAMPLE_TIME
+                | crate::core::perf_data::PERF_SAMPLE_PERIOD
+                | crate::core::perf_data::PERF_SAMPLE_REGS_USER
+                | crate::core::perf_data::PERF_SAMPLE_STACK_USER,
+            12345,
+            0x4000,
+            1234,
+            1234,
+            1000000,
+            None,
+            None,
+            1,
+            Some(RegsUser {
+                abi: 1,
+                regs: vec![
+                    0x1000, 0x2000, 0x3000, 0x4000, 0x5000, 0x6000, 0x7000, 0x8000, 0x9000,
+                ],
+            }),
+            Some(StackUser {
+                data: vec![0u8; 1024],
+                dyn_size: 1024,
+            }),
+        );
+
+        let result = unwind_sample_dwarf(sample, &unwinder);
+
+        assert!(
+            result.callchain.is_none(),
+            "Should have no callchain when both DWARF and FP fail"
+        );
+    }
+
+    #[test]
+    fn test_fallback_to_fp_missing_regs() {
+        let unwinder = DwarfUnwinder::new();
+
+        let fp_callchain = vec![0x1000u64, 0x2000u64];
+
+        let sample = SampleEvent::new(
+            crate::core::perf_data::PERF_SAMPLE_IP
+                | crate::core::perf_data::PERF_SAMPLE_TID
+                | crate::core::perf_data::PERF_SAMPLE_TIME
+                | crate::core::perf_data::PERF_SAMPLE_PERIOD
+                | crate::core::perf_data::PERF_SAMPLE_CALLCHAIN,
+            12345,
+            0x4000,
+            1234,
+            1234,
+            1000000,
+            Some(fp_callchain.clone()),
+            None,
+            1,
+            None,
+            None,
+        );
+
+        let result = unwind_sample_dwarf(sample, &unwinder);
+
+        assert!(
+            result.callchain.is_some(),
+            "Should preserve FP callchain when regs_user is missing"
+        );
+        assert_eq!(result.callchain.unwrap(), fp_callchain);
     }
 }
