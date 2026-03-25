@@ -351,16 +351,25 @@ fn record_with_pid(
         erb.ringbuf.enable().context("Failed to enable sampling")?;
     }
 
-    let mut unwinder = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
+    let unwinder = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
         let mut u = DwarfUnwinder::new();
         if let Ok(maps_content) = std::fs::read_to_string(format!("/proc/{}/maps", pid)) {
             for line in maps_content.lines() {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 6 {
-                    if let Some(filename) = parts.get(5) {
-                        let path = PathBuf::from(filename);
-                        if path.exists() && !filename.starts_with('[') {
-                            let _ = u.load_binary(&path);
+                    // Parse address range from parts[0] (format: "start-end")
+                    let addr_range = parts[0];
+                    if let Some((start_str, end_str)) = addr_range.split_once('-') {
+                        if let (Ok(start), Ok(end)) = (
+                            u64::from_str_radix(start_str, 16),
+                            u64::from_str_radix(end_str, 16),
+                        ) {
+                            if let Some(filename) = parts.get(5) {
+                                let path = PathBuf::from(filename);
+                                if path.exists() && !filename.starts_with('[') {
+                                    let _ = u.load_binary_with_mapping(&path, start, end);
+                                }
+                            }
                         }
                     }
                 }
@@ -496,7 +505,7 @@ fn record_with_command(
 
             kill(child, Signal::SIGCONT).context("Failed to continue child process")?;
 
-            let mut unwinder = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
+            let unwinder = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
                 let mut u = DwarfUnwinder::new();
                 if let Ok(maps_content) =
                     std::fs::read_to_string(format!("/proc/{}/maps", child.as_raw()))
@@ -504,10 +513,19 @@ fn record_with_command(
                     for line in maps_content.lines() {
                         let parts: Vec<&str> = line.split_whitespace().collect();
                         if parts.len() >= 6 {
-                            if let Some(filename) = parts.get(5) {
-                                let path = PathBuf::from(filename);
-                                if path.exists() && !filename.starts_with('[') {
-                                    let _ = u.load_binary(&path);
+                            // Parse address range from parts[0] (format: "start-end")
+                            let addr_range = parts[0];
+                            if let Some((start_str, end_str)) = addr_range.split_once('-') {
+                                if let (Ok(start), Ok(end)) = (
+                                    u64::from_str_radix(start_str, 16),
+                                    u64::from_str_radix(end_str, 16),
+                                ) {
+                                    if let Some(filename) = parts.get(5) {
+                                        let path = PathBuf::from(filename);
+                                        if path.exists() && !filename.starts_with('[') {
+                                            let _ = u.load_binary_with_mapping(&path, start, end);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -838,10 +856,23 @@ fn record_system_wide(
                                 for line in maps_content.lines() {
                                     let parts: Vec<&str> = line.split_whitespace().collect();
                                     if parts.len() >= 6 {
-                                        if let Some(filename) = parts.get(5) {
-                                            let path = PathBuf::from(filename);
-                                            if path.exists() && !filename.starts_with('[') {
-                                                let _ = unwinder.load_binary(&path);
+                                        // Parse address range from parts[0] (format: "start-end")
+                                        let addr_range = parts[0];
+                                        if let Some((start_str, end_str)) =
+                                            addr_range.split_once('-')
+                                        {
+                                            if let (Ok(start), Ok(end)) = (
+                                                u64::from_str_radix(start_str, 16),
+                                                u64::from_str_radix(end_str, 16),
+                                            ) {
+                                                if let Some(filename) = parts.get(5) {
+                                                    let path = PathBuf::from(filename);
+                                                    if path.exists() && !filename.starts_with('[') {
+                                                        let _ = unwinder.load_binary_with_mapping(
+                                                            &path, start, end,
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }

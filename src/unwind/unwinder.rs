@@ -46,6 +46,90 @@ mod regs {
     pub const R15: u32 = 23;
 }
 
+/// A memory mapping from a process's address space.
+///
+/// Represents a contiguous range of memory mapped from a binary file,
+/// such as an executable or shared library.
+#[derive(Clone, Debug)]
+pub struct MemoryMapping {
+    /// Start address (inclusive)
+    pub start: u64,
+    /// End address (exclusive)
+    pub end: u64,
+    /// Path to the binary file
+    pub path: PathBuf,
+}
+
+impl MemoryMapping {
+    /// Check if an address falls within this mapping.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - The address to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if `start <= addr < end`, `false` otherwise.
+    pub fn contains(&self, addr: u64) -> bool {
+        addr >= self.start && addr < self.end
+    }
+}
+
+/// Collection of memory mappings with efficient lookup.
+///
+/// Maintains mappings sorted by start address for O(log n) binary search lookups.
+#[derive(Clone, Debug, Default)]
+pub struct MemoryMappings {
+    /// Sorted by start address for binary search
+    mappings: Vec<MemoryMapping>,
+}
+
+impl MemoryMappings {
+    /// Create an empty collection of memory mappings.
+    pub fn new() -> Self {
+        Self {
+            mappings: Vec::new(),
+        }
+    }
+
+    /// Add a mapping, keeping the list sorted by start address.
+    ///
+    /// If a mapping with the same start address already exists, it is replaced.
+    pub fn add(&mut self, mapping: MemoryMapping) {
+        let pos = self
+            .mappings
+            .binary_search_by(|m| m.start.cmp(&mapping.start));
+        match pos {
+            Ok(idx) => self.mappings[idx] = mapping,
+            Err(idx) => self.mappings.insert(idx, mapping),
+        }
+    }
+
+    /// Find the mapping containing the given address using binary search.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - The address to look up
+    ///
+    /// # Returns
+    ///
+    /// The mapping containing the address, or `None` if not found.
+    pub fn find(&self, addr: u64) -> Option<&MemoryMapping> {
+        // Binary search to find the rightmost mapping with start <= addr
+        // Then check if addr < end
+        let idx = self.mappings.partition_point(|m| m.start <= addr);
+        if idx == 0 {
+            return None;
+        }
+        let mapping = &self.mappings[idx - 1];
+        if mapping.contains(addr) {
+            Some(mapping)
+        } else {
+            None
+        }
+    }
+}
+
 /// Maximum stack depth to prevent infinite loops on corrupted stacks.
 const MAX_STACK_DEPTH: usize = 128;
 
@@ -397,6 +481,8 @@ pub fn restore_registers(
 pub struct DwarfUnwinder {
     /// Cached binary unwind information, keyed by binary path.
     binaries: HashMap<PathBuf, BinaryUnwindInfo>,
+    /// Memory mappings for address-to-binary lookup.
+    mappings: MemoryMappings,
 }
 
 impl DwarfUnwinder {
@@ -404,6 +490,7 @@ impl DwarfUnwinder {
     pub fn new() -> Self {
         Self {
             binaries: HashMap::new(),
+            mappings: MemoryMappings::new(),
         }
     }
 
@@ -423,10 +510,41 @@ impl DwarfUnwinder {
         Ok(())
     }
 
+    /// Load unwind information from a binary file with memory mapping.
+    ///
+    /// This method loads the binary's unwind information and stores the
+    /// memory mapping, enabling address-to-binary lookups via
+    /// `find_binary_for_address()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the ELF binary file
+    /// * `start` - Start address of the memory mapping
+    /// * `end` - End address of the memory mapping (exclusive)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the binary was loaded successfully, or an error
+    /// if the file could not be read or parsed.
+    pub fn load_binary_with_mapping(&mut self, path: &PathBuf, start: u64, end: u64) -> Result<()> {
+        // Load the binary unwind info
+        let info = BinaryUnwindInfo::load(path)?;
+        self.binaries.insert(path.clone(), info);
+
+        // Store the memory mapping
+        self.mappings.add(MemoryMapping {
+            start,
+            end,
+            path: path.clone(),
+        });
+
+        Ok(())
+    }
+
     /// Find the binary containing the given address.
-    fn find_binary_for_address(&self, _address: u64) -> Option<&BinaryUnwindInfo> {
-        // TODO: Implement proper address-to-binary mapping using process memory maps
-        self.binaries.values().find(|b| b.has_unwind_info())
+    fn find_binary_for_address(&self, address: u64) -> Option<&BinaryUnwindInfo> {
+        let mapping = self.mappings.find(address)?;
+        self.binaries.get(&mapping.path)
     }
 
     /// Unwind the stack starting from the given instruction pointer.
@@ -784,5 +902,213 @@ mod tests {
     #[test]
     fn test_max_stack_depth_constant() {
         assert_eq!(MAX_STACK_DEPTH, 128);
+    }
+
+    #[test]
+    fn test_memory_mapping_contains() {
+        let mapping = MemoryMapping {
+            start: 0x1000,
+            end: 0x2000,
+            path: PathBuf::from("/lib/libc.so"),
+        };
+
+        // Address at start (inclusive)
+        assert!(mapping.contains(0x1000));
+        // Address in the middle
+        assert!(mapping.contains(0x1500));
+        // Address at end - 1 (still within range)
+        assert!(mapping.contains(0x1FFF));
+        // Address at end (exclusive)
+        assert!(!mapping.contains(0x2000));
+        // Address before start
+        assert!(!mapping.contains(0x0FFF));
+        // Address after end
+        assert!(!mapping.contains(0x2001));
+    }
+
+    #[test]
+    fn test_memory_mappings_new() {
+        let mappings = MemoryMappings::new();
+        assert!(mappings.find(0x1000).is_none());
+    }
+
+    #[test]
+    fn test_memory_mappings_add_sorted() {
+        let mut mappings = MemoryMappings::new();
+
+        // Add in non-sorted order
+        mappings.add(MemoryMapping {
+            start: 0x3000,
+            end: 0x4000,
+            path: PathBuf::from("/lib/libc.so"),
+        });
+        mappings.add(MemoryMapping {
+            start: 0x1000,
+            end: 0x2000,
+            path: PathBuf::from("/bin/ls"),
+        });
+        mappings.add(MemoryMapping {
+            start: 0x5000,
+            end: 0x6000,
+            path: PathBuf::from("/lib/libm.so"),
+        });
+
+        // Verify they are sorted by start address
+        assert_eq!(mappings.mappings[0].start, 0x1000);
+        assert_eq!(mappings.mappings[1].start, 0x3000);
+        assert_eq!(mappings.mappings[2].start, 0x5000);
+    }
+
+    #[test]
+    fn test_memory_mappings_find() {
+        let mut mappings = MemoryMappings::new();
+
+        mappings.add(MemoryMapping {
+            start: 0x1000,
+            end: 0x2000,
+            path: PathBuf::from("/bin/ls"),
+        });
+        mappings.add(MemoryMapping {
+            start: 0x3000,
+            end: 0x4000,
+            path: PathBuf::from("/lib/libc.so"),
+        });
+        mappings.add(MemoryMapping {
+            start: 0x5000,
+            end: 0x6000,
+            path: PathBuf::from("/lib/libm.so"),
+        });
+
+        // Find in first mapping
+        let found = mappings.find(0x1500).unwrap();
+        assert_eq!(found.path, PathBuf::from("/bin/ls"));
+
+        // Find in second mapping
+        let found = mappings.find(0x3500).unwrap();
+        assert_eq!(found.path, PathBuf::from("/lib/libc.so"));
+
+        // Find in third mapping
+        let found = mappings.find(0x5500).unwrap();
+        assert_eq!(found.path, PathBuf::from("/lib/libm.so"));
+
+        // Address not in any mapping (gap between mappings)
+        assert!(mappings.find(0x2500).is_none());
+
+        // Address before all mappings
+        assert!(mappings.find(0x0100).is_none());
+
+        // Address after all mappings
+        assert!(mappings.find(0x7000).is_none());
+    }
+
+    #[test]
+    fn test_memory_mappings_replace_duplicate_start() {
+        let mut mappings = MemoryMappings::new();
+
+        mappings.add(MemoryMapping {
+            start: 0x1000,
+            end: 0x2000,
+            path: PathBuf::from("/old/path"),
+        });
+
+        mappings.add(MemoryMapping {
+            start: 0x1000,
+            end: 0x3000,
+            path: PathBuf::from("/new/path"),
+        });
+
+        // Should have only one mapping (replaced)
+        assert_eq!(mappings.mappings.len(), 1);
+        assert_eq!(mappings.mappings[0].end, 0x3000);
+        assert_eq!(mappings.mappings[0].path, PathBuf::from("/new/path"));
+    }
+
+    #[test]
+    fn test_memory_mappings_default() {
+        let mappings = MemoryMappings::default();
+        assert!(mappings.find(0x1000).is_none());
+    }
+
+    #[test]
+    fn test_find_binary_for_address_no_mapping() {
+        let unwinder = DwarfUnwinder::new();
+        assert!(unwinder.find_binary_for_address(0x1000).is_none());
+    }
+
+    #[test]
+    fn test_find_binary_for_address_with_mapping_no_binary() {
+        let mut unwinder = DwarfUnwinder::new();
+        unwinder.mappings.add(MemoryMapping {
+            start: 0x1000,
+            end: 0x2000,
+            path: PathBuf::from("/bin/test"),
+        });
+        assert!(unwinder.find_binary_for_address(0x1500).is_none());
+    }
+
+    #[test]
+    fn test_find_binary_for_address_outside_mapping() {
+        let mut unwinder = DwarfUnwinder::new();
+        unwinder.mappings.add(MemoryMapping {
+            start: 0x1000,
+            end: 0x2000,
+            path: PathBuf::from("/bin/test"),
+        });
+        assert!(unwinder.find_binary_for_address(0x0500).is_none());
+        assert!(unwinder.find_binary_for_address(0x2500).is_none());
+    }
+
+    #[test]
+    fn test_load_binary_with_mapping() {
+        let mut unwinder = DwarfUnwinder::new();
+        let path = PathBuf::from("/usr/bin/ls");
+
+        if !path.exists() {
+            return;
+        }
+
+        let result = unwinder.load_binary_with_mapping(&path, 0x400000, 0x500000);
+        assert!(result.is_ok());
+        assert!(unwinder.binaries.contains_key(&path));
+
+        let found = unwinder.find_binary_for_address(0x450000);
+        assert!(found.is_some());
+    }
+
+    #[test]
+    fn test_load_binary_with_mapping_nonexistent_file() {
+        let mut unwinder = DwarfUnwinder::new();
+        let path = PathBuf::from("/nonexistent/file/that/does/not/exist");
+
+        let result = unwinder.load_binary_with_mapping(&path, 0x1000, 0x2000);
+        assert!(result.is_err());
+        assert!(!unwinder.binaries.contains_key(&path));
+    }
+
+    #[test]
+    fn test_load_binary_with_mapping_multiple() {
+        let mut unwinder = DwarfUnwinder::new();
+        let path1 = PathBuf::from("/usr/bin/ls");
+        let path2 = PathBuf::from("/usr/bin/cat");
+
+        if !path1.exists() || !path2.exists() {
+            return;
+        }
+
+        unwinder
+            .load_binary_with_mapping(&path1, 0x400000, 0x500000)
+            .unwrap();
+        unwinder
+            .load_binary_with_mapping(&path2, 0x600000, 0x700000)
+            .unwrap();
+
+        assert!(unwinder.binaries.contains_key(&path1));
+        assert!(unwinder.binaries.contains_key(&path2));
+
+        let found1 = unwinder.find_binary_for_address(0x450000);
+        assert!(found1.is_some());
+
+        let found2 = unwinder.find_binary_for_address(0x650000);
+        assert!(found2.is_some());
     }
 }
