@@ -307,6 +307,11 @@ fn record_with_pid(
 
     // For FP mode, kernel does unwinding; for DWARF mode, we do it in user-space
     let kernel_callchain = matches!(call_graph, Some(CallGraphMethod::Fp));
+    let dwarf_config = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
+        Some((X86_64_REGS_DWARF, DEFAULT_STACK_SIZE))
+    } else {
+        None
+    };
 
     for parsed in events.iter() {
         let attr = event_to_attr(&parsed.event, sample_period, call_graph);
@@ -320,6 +325,10 @@ fn record_with_pid(
             None
         };
 
+        let (regs_user, stack_user) = dwarf_config
+            .map(|(r, s)| (Some(r), Some(s)))
+            .unwrap_or((None, None));
+
         let ringbuf = RingBuffer::from_event_for_pid(
             parsed.event.clone(),
             pid as i32,
@@ -328,6 +337,8 @@ fn record_with_pid(
             kernel_callchain,
             max_stack,
             cpu,
+            regs_user,
+            stack_user,
         )
         .with_context(|| format!("Failed to create ring buffer for event {:?}", parsed.event))?;
 
@@ -444,6 +455,11 @@ fn record_with_command(
     max_stack: u16,
 ) -> Result<()> {
     let kernel_callchain = matches!(call_graph, Some(CallGraphMethod::Fp));
+    let dwarf_config = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
+        Some((X86_64_REGS_DWARF, DEFAULT_STACK_SIZE))
+    } else {
+        None
+    };
 
     match unsafe { fork() }? {
         ForkResult::Parent { child } => {
@@ -469,6 +485,10 @@ fn record_with_command(
                     None
                 };
 
+                let (regs_user, stack_user) = dwarf_config
+                    .map(|(r, s)| (Some(r), Some(s)))
+                    .unwrap_or((None, None));
+
                 let ringbuf = RingBuffer::from_event_for_pid(
                     parsed.event.clone(),
                     child.as_raw(),
@@ -477,6 +497,8 @@ fn record_with_command(
                     kernel_callchain,
                     max_stack,
                     cpu,
+                    regs_user,
+                    stack_user,
                 )
                 .with_context(|| {
                     format!("Failed to create ring buffer for event {:?}", parsed.event)
@@ -772,6 +794,11 @@ fn record_system_wide(
     eprintln!("Recording on CPUs: {:?}", cpus);
 
     let kernel_callchain = matches!(call_graph, Some(CallGraphMethod::Fp));
+    let dwarf_config = if matches!(call_graph, Some(CallGraphMethod::Dwarf)) {
+        Some((X86_64_REGS_DWARF, DEFAULT_STACK_SIZE))
+    } else {
+        None
+    };
 
     let mut writer = PerfDataWriter::from_path(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path))?;
@@ -787,6 +814,10 @@ fn record_system_wide(
 
         let mut event_ids_for_attr = Vec::with_capacity(cpus.len());
 
+        let (regs_user, stack_user) = dwarf_config
+            .map(|(r, s)| (Some(r), Some(s)))
+            .unwrap_or((None, None));
+
         for &cpu in &cpus {
             let event_id = generate_event_id();
             let ringbuf = RingBuffer::from_event_for_cpu(
@@ -796,6 +827,8 @@ fn record_system_wide(
                 false,
                 kernel_callchain,
                 max_stack,
+                regs_user,
+                stack_user,
             )
             .with_context(|| {
                 format!(

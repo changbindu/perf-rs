@@ -43,6 +43,23 @@ impl RingBuffer {
         })
     }
 
+    /// Creates a ring buffer for monitoring a specific process.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The performance event to monitor
+    /// * `pid` - The process ID to monitor
+    /// * `sample_period` - The number of events between samples
+    /// * `inherit` - Whether to inherit to child processes
+    /// * `callchain` - Whether to enable FP callchain recording
+    /// * `max_stack` - Maximum number of stack frames for callchain (0 for default)
+    /// * `cpu` - Optional CPU to restrict monitoring to (for tracepoints)
+    /// * `regs_user` - Optional register mask for DWARF unwinding
+    /// * `stack_user` - Optional stack size for DWARF unwinding
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the configured `RingBuffer` or an error.
     pub fn from_event_for_pid<E: Event + Clone + 'static>(
         event: E,
         pid: i32,
@@ -51,6 +68,8 @@ impl RingBuffer {
         callchain: bool,
         max_stack: u16,
         cpu: Option<u32>,
+        regs_user: Option<u64>,
+        stack_user: Option<u32>,
     ) -> Result<Self> {
         let config = RingBufferConfig::default();
 
@@ -85,6 +104,15 @@ impl RingBuffer {
             }
         }
 
+        // Enable DWARF stack unwinding support
+        if let (Some(regs), Some(stack)) = (regs_user, stack_user) {
+            builder
+                .sample(SampleFlag::REGS_USER)
+                .sample(SampleFlag::STACK_USER)
+                .sample_regs_user(regs)
+                .sample_stack_user(stack);
+        }
+
         let counter = builder.build().map_err(|e| PerfError::CounterSetup {
             source: Box::new(e),
         })?;
@@ -105,6 +133,8 @@ impl RingBuffer {
     /// * `enable_on_exec` - Whether to enable the counter on exec (typically false for CPU-wide)
     /// * `callchain` - Whether to enable callchain (stack trace) recording
     /// * `max_stack` - Maximum number of stack frames to record (0 for default)
+    /// * `regs_user` - Optional register mask for DWARF unwinding
+    /// * `stack_user` - Optional stack size for DWARF unwinding
     ///
     /// # Returns
     ///
@@ -123,6 +153,8 @@ impl RingBuffer {
     ///     false,  // enable_on_exec
     ///     false,  // callchain
     ///     0,      // max_stack
+    ///     None,   // regs_user
+    ///     None,   // stack_user
     /// )?;
     /// # Ok::<(), perf_rs::error::PerfError>(())
     /// ```
@@ -133,6 +165,8 @@ impl RingBuffer {
         enable_on_exec: bool,
         callchain: bool,
         max_stack: u16,
+        regs_user: Option<u64>,
+        stack_user: Option<u32>,
     ) -> Result<Self> {
         let config = RingBufferConfig::default();
 
@@ -153,6 +187,15 @@ impl RingBuffer {
             if max_stack > 0 {
                 builder.sample_max_stack(max_stack);
             }
+        }
+
+        // Enable DWARF stack unwinding support
+        if let (Some(regs), Some(stack)) = (regs_user, stack_user) {
+            builder
+                .sample(SampleFlag::REGS_USER)
+                .sample(SampleFlag::STACK_USER)
+                .sample_regs_user(regs)
+                .sample_stack_user(stack);
         }
 
         let counter = builder.build().map_err(|e| PerfError::CounterSetup {
@@ -217,8 +260,16 @@ mod tests {
             return;
         }
 
-        let result =
-            RingBuffer::from_event_for_cpu(Hardware::CPU_CYCLES, 0, 100000, false, false, 0);
+        let result = RingBuffer::from_event_for_cpu(
+            Hardware::CPU_CYCLES,
+            0,
+            100000,
+            false,
+            false,
+            0,
+            None,
+            None,
+        );
 
         assert!(
             result.is_ok(),
@@ -234,16 +285,32 @@ mod tests {
             return;
         }
 
-        let result =
-            RingBuffer::from_event_for_cpu(Hardware::INSTRUCTIONS, 0, 50000, false, false, 0);
+        let result = RingBuffer::from_event_for_cpu(
+            Hardware::INSTRUCTIONS,
+            0,
+            50000,
+            false,
+            false,
+            0,
+            None,
+            None,
+        );
         assert!(
             result.is_ok(),
             "Failed to create ring buffer for CPU 0: {:?}",
             result.err()
         );
 
-        let result =
-            RingBuffer::from_event_for_cpu(Hardware::INSTRUCTIONS, 1, 50000, false, false, 0);
+        let result = RingBuffer::from_event_for_cpu(
+            Hardware::INSTRUCTIONS,
+            1,
+            50000,
+            false,
+            false,
+            0,
+            None,
+            None,
+        );
         if result.is_err() {
             eprintln!("CPU 1 test skipped (likely single-CPU system)");
         }
@@ -256,9 +323,17 @@ mod tests {
             return;
         }
 
-        let mut ringbuf =
-            RingBuffer::from_event_for_cpu(Hardware::CPU_CYCLES, 0, 100000, false, false, 0)
-                .expect("Failed to create ring buffer");
+        let mut ringbuf = RingBuffer::from_event_for_cpu(
+            Hardware::CPU_CYCLES,
+            0,
+            100000,
+            false,
+            false,
+            0,
+            None,
+            None,
+        )
+        .expect("Failed to create ring buffer");
 
         assert!(ringbuf.enable().is_ok(), "Failed to enable ring buffer");
         assert!(ringbuf.disable().is_ok(), "Failed to disable ring buffer");
